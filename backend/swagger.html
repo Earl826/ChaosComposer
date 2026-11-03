@@ -1,0 +1,47 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src &#x27;self&#x27;; script-src &#x27;self&#x27; &#x27;nonce-caOnk2DFXm3VTaZoDA-ydQ&#x27; https://cdn.jsdelivr.net; style-src &#x27;self&#x27; &#x27;unsafe-inline&#x27; https://cdn.jsdelivr.net; img-src &#x27;self&#x27; data: https:; font-src &#x27;self&#x27; https://cdn.jsdelivr.net; connect-src &#x27;self&#x27;; frame-ancestors &#x27;none&#x27;; base-uri &#x27;self&#x27;; form-action &#x27;self&#x27;">
+        <meta http-equiv="X-Content-Type-Options" content="nosniff">
+        <meta http-equiv="X-Frame-Options" content="DENY">
+        <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+        <title>API Documentation</title>
+        <link rel="stylesheet"
+              type="text/css"
+              integrity="sha384-AHNbXeU7DPcgcihnwKYc3FOT0hTfhEwVFc2JRxxF5S/mplUdt/7G1g6nIblzENrX"
+              crossorigin="anonymous"
+              href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.4/swagger-ui.css" />
+      </head>
+      <body>
+        <div id="swagger-ui"></div>
+        <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.4/swagger-ui-bundle.js"
+                integrity="sha384-FgJpbEfGqpFeiFJh0+HNvyohx84XMd+IwgPyxJxjuDFMHVYmoFqrDEJNrVFexwA0"
+                crossorigin="anonymous"></script>
+        <script nonce="caOnk2DFXm3VTaZoDA-ydQ">
+          // Enhanced security configuration
+          const ui = SwaggerUIBundle({
+            url: "/api/openapi.json",
+            dom_id: '#swagger-ui',
+            presets: [SwaggerUIBundle.presets.apis],
+            layout: 'BaseLayout',
+            validatorUrl: null,  // Disable external validator for security
+            tryItOutEnabled: true,
+            supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'],
+            requestInterceptor: function(request) {
+              // Add security headers to requests
+              request.headers['X-Requested-With'] = 'XMLHttpRequest';
+              return request;
+            },
+            
+            responseInterceptor: function(response) {
+              return response;
+            }
+    
+          });
+        </script>
+      </body>
+    </html>
+    

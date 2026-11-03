@@ -1,0 +1,75 @@
+# Dependencies
+node_modules
+.python_packages/
+
+# Build output
+dist
+dist-ssr
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Local config and secrets (never commit)
+.env
+.secrets
+/secrets
+appsettings.json
+local.settings.json
+*.local
+
+# Python environments
+.venv
+venv/
+venv.bak/
+env/
+env.bak/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Azure Functions and Azurite local data
+/data
+__blobstorage__
+__queuestorage__
+__tablestorage__
+__azurite_db*__.json
+AzuriteConfig
+
+# Editors and OS files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+.DS_Store
+*.suo
+*.user
+*.ntvs*
+*.sw?
+
+# Visual Studio / .NET (not used in this project)
+bin/
+**/bin/
+!Modules/**
+obj
+csx
+.vs
+edge
+Publish
+*.cscfg
+*.Cache
+project.lock.json
+*.njsproj
+*.sln
+/packages
+/TestResults
+/tools/NuGet.exe
+/App_Data
+
+.vscode

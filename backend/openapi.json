@@ -1,0 +1,705 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "API",
+    "version": "1.0.0",
+    "description": "Auto-generated OpenAPI documentation. Markdown supported in descriptions (CommonMark).",
+    "summary": "API"
+  },
+  "paths": {
+    "/api/negotiate": {
+      "post": {
+        "summary": "Get SignalR connection details",
+        "description": "Returns the URL and access token the browser needs for live updates. 200: connection details issued.",
+        "operationId": "post_negotiate",
+        "tags": [
+          "realtime"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NegotiateResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions": {
+      "post": {
+        "summary": "Create a room",
+        "description": "Create a room and make the caller its host. 201: room created. 422: name is blank or longer than 24 characters.",
+        "operationId": "post_create_session",
+        "tags": [
+          "sessions"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreated"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_code}": {
+      "get": {
+        "summary": "Get room state",
+        "description": "Clients call this on load and when a live update arrives. 200: current status, round, players and submissions. 404: no room with this code.",
+        "operationId": "get_get_session",
+        "tags": [
+          "sessions"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionState"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "session_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{session_code}/advance": {
+      "post": {
+        "summary": "Advance the round (host only)",
+        "description": "Close the current round for absent players so the game does not stall. 200: next round started. 403: caller is not the host. 409: round is not open.",
+        "operationId": "post_advance_round",
+        "tags": [
+          "game"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionState"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "session_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{session_code}/clip": {
+      "get": {
+        "summary": "Get the clip to build on",
+        "description": "Returns the previous contributor's clip. The original prompt is never returned. 200: short-lived read link to the clip. 404: no room with this code. 409: round not started, or no clip available for this player.",
+        "operationId": "get_get_clip",
+        "tags": [
+          "game"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipLink"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "session_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{session_code}/players": {
+      "post": {
+        "summary": "Join a room",
+        "description": "Join a room that is still in the lobby. 201: joined. 404: no room with this code. 409: the game has already started.",
+        "operationId": "post_join_session",
+        "tags": [
+          "sessions"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerCredentials"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "session_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinSessionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_code}/reveal": {
+      "get": {
+        "summary": "Reveal all chains",
+        "description": "Every chain with its original prompt, each stage, and its final mix. 200: all chains in round order. 404: no room with this code. 409: the game has not finished.",
+        "operationId": "get_reveal",
+        "tags": [
+          "game"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevealResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "session_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{session_code}/start": {
+      "post": {
+        "summary": "Start the game",
+        "description": "Start round 1. Host only, using the X-Player-Token header. 200: game started, status is recording. 403: caller is not the host. 404: no room with this code. 409: fewer than 4 or more than 6 players.",
+        "operationId": "post_start_game",
+        "tags": [
+          "game"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionState"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "session_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{session_code}/submissions": {
+      "post": {
+        "summary": "Confirm a clip for the current round",
+        "description": "Record that this player's clip has uploaded. The server advances the round when everyone has submitted. 200: accepted, returns the updated room. 404: no room with this code. 409: round is closed, or the player already submitted.",
+        "operationId": "post_submit_clip",
+        "tags": [
+          "game"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionState"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "session_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitClipRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_code}/uploads": {
+      "post": {
+        "summary": "Request a clip upload link",
+        "description": "Get a short-lived SAS link to upload one clip directly to Blob Storage. 200: upload link issued. 404: no room with this code. 409: no round is open for uploads.",
+        "operationId": "post_create_upload_link",
+        "tags": [
+          "game"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadLink"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "session_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadLinkRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChainResult": {
+        "properties": {
+          "chain_id": {
+            "title": "Chain Id",
+            "type": "string"
+          },
+          "original_prompt": {
+            "title": "Original Prompt",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageResult"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "final_mix_url": {
+            "title": "Final Mix Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chain_id",
+          "original_prompt",
+          "stages",
+          "final_mix_url"
+        ],
+        "title": "ChainResult",
+        "type": "object"
+      },
+      "ClipLink": {
+        "description": "The prompt is never included. Players hear only the audio.",
+        "properties": {
+          "chain_id": {
+            "title": "Chain Id",
+            "type": "string"
+          },
+          "round": {
+            "minimum": 0,
+            "title": "Round",
+            "type": "integer"
+          },
+          "read_url": {
+            "title": "Read Url",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chain_id",
+          "round",
+          "read_url",
+          "expires_at"
+        ],
+        "title": "ClipLink",
+        "type": "object"
+      },
+      "CreateSessionRequest": {
+        "properties": {
+          "player_name": {
+            "examples": [
+              "Ana"
+            ],
+            "maxLength": 24,
+            "minLength": 1,
+            "title": "Player Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player_name"
+        ],
+        "title": "CreateSessionRequest",
+        "type": "object"
+      },
+      "JoinSessionRequest": {
+        "properties": {
+          "player_name": {
+            "examples": [
+              "Ben"
+            ],
+            "maxLength": 24,
+            "minLength": 1,
+            "title": "Player Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player_name"
+        ],
+        "title": "JoinSessionRequest",
+        "type": "object"
+      },
+      "NegotiateResponse": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "access_token"
+        ],
+        "title": "NegotiateResponse",
+        "type": "object"
+      },
+      "PlayerCredentials": {
+        "properties": {
+          "player_id": {
+            "title": "Player Id",
+            "type": "string"
+          },
+          "player_token": {
+            "description": "Send as the X-Player-Token header on later requests.",
+            "title": "Player Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player_id",
+          "player_token"
+        ],
+        "title": "PlayerCredentials",
+        "type": "object"
+      },
+      "PlayerInfo": {
+        "properties": {
+          "player_id": {
+            "title": "Player Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "is_host": {
+            "title": "Is Host",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "player_id",
+          "name",
+          "is_host"
+        ],
+        "title": "PlayerInfo",
+        "type": "object"
+      },
+      "RevealResponse": {
+        "properties": {
+          "session_code": {
+            "title": "Session Code",
+            "type": "string"
+          },
+          "chains": {
+            "items": {
+              "$ref": "#/components/schemas/ChainResult"
+            },
+            "title": "Chains",
+            "type": "array"
+          }
+        },
+        "required": [
+          "session_code",
+          "chains"
+        ],
+        "title": "RevealResponse",
+        "type": "object"
+      },
+      "RoundStatus": {
+        "enum": [
+          "lobby",
+          "recording",
+          "mixing",
+          "finished"
+        ],
+        "title": "RoundStatus",
+        "type": "string"
+      },
+      "SessionCreated": {
+        "properties": {
+          "player_id": {
+            "title": "Player Id",
+            "type": "string"
+          },
+          "player_token": {
+            "description": "Send as the X-Player-Token header on later requests.",
+            "title": "Player Token",
+            "type": "string"
+          },
+          "session_code": {
+            "examples": [
+              "K7QX"
+            ],
+            "maxLength": 4,
+            "minLength": 4,
+            "title": "Session Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "player_id",
+          "player_token",
+          "session_code"
+        ],
+        "title": "SessionCreated",
+        "type": "object"
+      },
+      "SessionState": {
+        "properties": {
+          "session_code": {
+            "title": "Session Code",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RoundStatus"
+          },
+          "current_round": {
+            "minimum": 0,
+            "title": "Current Round",
+            "type": "integer"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerInfo"
+            },
+            "title": "Players",
+            "type": "array"
+          },
+          "submitted_player_ids": {
+            "description": "Players who have submitted this round.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Submitted Player Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "session_code",
+          "status",
+          "current_round",
+          "players",
+          "submitted_player_ids"
+        ],
+        "title": "SessionState",
+        "type": "object"
+      },
+      "StageResult": {
+        "properties": {
+          "round": {
+            "minimum": 0,
+            "title": "Round",
+            "type": "integer"
+          },
+          "player_name": {
+            "title": "Player Name",
+            "type": "string"
+          },
+          "clip_url": {
+            "title": "Clip Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "round",
+          "player_name",
+          "clip_url"
+        ],
+        "title": "StageResult",
+        "type": "object"
+      },
+      "SubmitClipRequest": {
+        "properties": {
+          "blob_name": {
+            "title": "Blob Name",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "exclusiveMinimum": 0,
+            "maximum": 60,
+            "title": "Duration Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "blob_name",
+          "duration_seconds"
+        ],
+        "title": "SubmitClipRequest",
+        "type": "object"
+      },
+      "UploadLink": {
+        "properties": {
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          },
+          "blob_name": {
+            "description": "Send this back in the submissions call.",
+            "title": "Blob Name",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_url",
+          "blob_name",
+          "expires_at"
+        ],
+        "title": "UploadLink",
+        "type": "object"
+      },
+      "UploadLinkRequest": {
+        "properties": {
+          "content_type": {
+            "examples": [
+              "audio/webm"
+            ],
+            "title": "Content Type",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0,
+            "maximum": 5000000,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_type",
+          "size_bytes"
+        ],
+        "title": "UploadLinkRequest",
+        "type": "object"
+      }
+    }
+  }
+}
