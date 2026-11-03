@@ -23,6 +23,8 @@ from models import (
     SubmitPromptRequest, AssignmentResponse, SubmitPatternRequest,
     AdvanceRoundRequest, RevealResponse, NegotiateRequest, NegotiateResponse,
 )
+from typing import Any, Literal
+from pydantic import BaseModel
 
 app = func.FunctionApp()
 
@@ -53,14 +55,14 @@ def inline_schema(model):
     return expand(root)
 
 
-def documented_responses(model, success=200, errors=()):
+def documented_responses(model: type[BaseModel], success: int = 200, errors: tuple[int, ...] = ()):
     descriptions = {
         200: "Successful response", 201: "Created", 401: "Missing or invalid player token",
         403: "Caller is not permitted to perform this action", 404: "Room not found",
         409: "State, round, assignment or duplicate-request conflict",
         422: "Invalid request data", 501: "Stub only: endpoint not implemented yet",
     }
-    result = {success: {"description": descriptions[success], "content": {
+    result: dict[int | Literal["default"], Any] = {success: {"description": descriptions[success], "content": {
         "application/json": {"schema": inline_schema(model)}}}}
     for status in sorted(set(errors) | {501}):
         result[status] = {"description": descriptions[status], "content": {
