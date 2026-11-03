@@ -1,32 +1,77 @@
-import json
+"""MVP Azure Functions API stubs: editable 16-step patterns, not audio uploads.
 
+All business endpoints intentionally return 501 until implemented.
+OpenAPI metadata describes the TARGET contract, not implemented behaviour.
+Requires existing azure-functions / azure-functions-openapi dependencies and
+Pydantic 2.x. Keep models_mvp.py alongside this file.
+
+Proposed rules: 4-6 ready players; frozen roster at start; one prompt per player;
+first assignment excludes the prompt author; N composing rounds for N players;
+auto-advance only after all contributions persist. No forced skip in this MVP.
+Do not store authoritative game state in process globals: use persisted state
+and conditional/atomic updates to protect concurrent advancement.
+"""
+import json
+from copy import deepcopy
 import azure.functions as func
 from azure_functions_openapi.decorator import openapi
 from azure_functions_openapi.openapi import get_openapi_json
 from azure_functions_openapi.swagger_ui import render_swagger_ui
-
 from models import (
-    ClipLink,
-    CreateSessionRequest,
-    JoinSessionRequest,
-    NegotiateResponse,
-    PlayerCredentials,
-    RevealResponse,
-    SessionCreated,
-    SessionState,
-    SubmitClipRequest,
-    UploadLink,
-    UploadLinkRequest,
+    ErrorResponse, CreateSessionRequest, JoinSessionRequest, SessionCreated,
+    PlayerCredentials, SessionState, ReadyRequest, StartGameRequest,
+    SubmitPromptRequest, AssignmentResponse, SubmitPatternRequest,
+    AdvanceRoundRequest, RevealResponse, NegotiateRequest, NegotiateResponse,
 )
 
 app = func.FunctionApp()
+
+PLAYER_TOKEN = [{
+    "name": "X-Player-Token", "in": "header", "required": True,
+    "description": "Room-scoped player credential returned by create/join. Validate membership and permissions in the handler.",
+    "schema": {"type": "string", "minLength": 1},
+}]
+
+
+def inline_schema(model):
+    """Produce a self-contained schema for responses= status-code maps."""
+    root = deepcopy(model.model_json_schema())
+    definitions = root.pop("$defs", {})
+    def expand(value):
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        if "$ref" in value and value["$ref"].startswith("#/$defs/"):
+            name = value["$ref"].split("/")[-1]
+            merged = deepcopy(definitions[name])
+            merged.update({k: v for k, v in value.items() if k != "$ref"})
+            return expand(merged)
+        # Mapping discriminator is optional; its local refs would dangle after
+        # inlining. Preserve propertyName and the discriminated oneOf branches.
+        return {k: expand(v) for k, v in value.items() if k != "mapping"}
+    return expand(root)
+
+
+def documented_responses(model, success=200, errors=()):
+    descriptions = {
+        200: "Successful response", 201: "Created", 401: "Missing or invalid player token",
+        403: "Caller is not permitted to perform this action", 404: "Room not found",
+        409: "State, round, assignment or duplicate-request conflict",
+        422: "Invalid request data", 501: "Stub only: endpoint not implemented yet",
+    }
+    result = {success: {"description": descriptions[success], "content": {
+        "application/json": {"schema": inline_schema(model)}}}}
+    for status in sorted(set(errors) | {501}):
+        result[status] = {"description": descriptions[status], "content": {
+            "application/json": {"schema": inline_schema(ErrorResponse)}}}
+    return result
 
 
 def not_implemented(name: str) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps({"code": "not_implemented", "detail": name}),
-        status_code=501,
-        mimetype="application/json",
+        status_code=501, mimetype="application/json",
     )
 
 
@@ -40,147 +85,163 @@ def swagger_ui(req: func.HttpRequest) -> func.HttpResponse:
     return render_swagger_ui()
 
 
+@app.route(route='sessions', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Create a room",
-    description=(
-        "Create a room and make the caller its host. "
-        "201: room created. 422: name is blank or longer than 24 characters."
-    ),
+    summary='Create a room',
+    description='Create a lobby and its host player; return a unique four-character room code and secret player credentials. Trim and validate names. Host readiness starts false.',
+    route='/api/sessions', method='post',
     requests=CreateSessionRequest,
-    responses=SessionCreated,
-    tags=["sessions"],
+    responses=documented_responses(SessionCreated, success=201, errors=(422,)),
+    tags=['sessions'],
 )
-@app.route(route="sessions", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def create_session(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("create_session")
+    return not_implemented('create_session')
 
 
+@app.route(route='sessions/{session_code}/players', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Join a room",
-    description=(
-        "Join a room that is still in the lobby. "
-        "201: joined. 404: no room with this code. 409: the game has already started."
-    ),
+    summary='Join a room',
+    description='Join only in lobby, with capacity at most six. Issue a new unique player ID and token; display names are not identity. Reject duplicate normalized display names for this proposed MVP.',
+    route='/api/sessions/{session_code}/players', method='post',
     requests=JoinSessionRequest,
-    responses=PlayerCredentials,
-    tags=["sessions"],
+    responses=documented_responses(PlayerCredentials, success=201, errors=(404, 409, 422)),
+    tags=['players'],
 )
-@app.route(route="sessions/{session_code}/players", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def join_session(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("join_session")
+    return not_implemented('join_session')
 
 
+@app.route(route='sessions/{session_code}', methods=['GET'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Get room state",
-    description=(
-        "Clients call this on load and when a live update arrives. "
-        "200: current status, round, players and submissions. 404: no room with this code."
-    ),
-    responses=SessionState,
-    tags=["sessions"],
+    summary='Get room state',
+    description='Return member-visible status, roster, readiness, round and submission progress. Never return player tokens, original prompts or musical histories here.',
+    route='/api/sessions/{session_code}', method='get',
+    parameters=PLAYER_TOKEN,
+    responses=documented_responses(SessionState, success=200, errors=(401, 403, 404)),
+    tags=['sessions'],
 )
-@app.route(route="sessions/{session_code}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_session(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("get_session")
+    return not_implemented('get_session')
 
 
+@app.route(route='sessions/{session_code}/players/me/ready', methods=['PUT'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Start the game",
-    description=(
-        "Start round 1. Host only, using the X-Player-Token header. "
-        "200: game started, status is recording. 403: caller is not the host. "
-        "404: no room with this code. 409: fewer than 4 or more than 6 players."
-    ),
-    responses=SessionState,
-    tags=["game"],
+    summary='Set my lobby readiness',
+    description='Idempotently set the authenticated player readiness. Lobby only. No client-supplied player identity.',
+    route='/api/sessions/{session_code}/players/me/ready', method='put',
+    parameters=PLAYER_TOKEN,
+    requests=ReadyRequest,
+    responses=documented_responses(SessionState, success=200, errors=(401, 403, 404, 409, 422)),
+    tags=['players'],
 )
-@app.route(route="sessions/{session_code}/start", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def set_ready(req: func.HttpRequest) -> func.HttpResponse:
+    return not_implemented('set_ready')
+
+
+@app.route(route='sessions/{session_code}/players/me', methods=['DELETE'], auth_level=func.AuthLevel.ANONYMOUS)
+@openapi(
+    summary='Leave the lobby',
+    description='Remove the authenticated player only while in lobby. If the host leaves, transfer host to the earliest remaining joiner; return its empty lobby snapshot and delete an empty room. Active-game leaving is out of scope; roster remains frozen.',
+    route='/api/sessions/{session_code}/players/me', method='delete',
+    parameters=PLAYER_TOKEN,
+    responses=documented_responses(SessionState, success=200, errors=(401, 403, 404, 409)),
+    tags=['players'],
+)
+def leave_session(req: func.HttpRequest) -> func.HttpResponse:
+    return not_implemented('leave_session')
+
+
+@app.route(route='sessions/{session_code}/start', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
+@openapi(
+    summary='Start prompt submission (host only)',
+    description='Require lobby, 4-6 players, all ready and matching expected_state_version. Freeze player order and total_rounds=N; enter prompt_submission with current_round=0. Conditional persistence must reject concurrent or stale starts.',
+    route='/api/sessions/{session_code}/start', method='post',
+    parameters=PLAYER_TOKEN,
+    requests=StartGameRequest,
+    responses=documented_responses(SessionState, success=200, errors=(401, 403, 404, 409, 422)),
+    tags=['game'],
+)
 def start_game(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("start_game")
+    return not_implemented('start_game')
 
 
+@app.route(route='sessions/{session_code}/prompts', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Request a clip upload link",
-    description=(
-        "Get a short-lived SAS link to upload one clip directly to Blob Storage. "
-        "200: upload link issued. 404: no room with this code. "
-        "409: no round is open for uploads."
-    ),
-    requests=UploadLinkRequest,
-    responses=UploadLink,
-    tags=["game"],
+    summary='Submit my starting prompt',
+    description='Accept one prompt per frozen player during prompt_submission. Exact retries return current state; changed duplicate prompts conflict. After all prompts persist, create N chains, assign each player a different player original prompt, and atomically enter composing round 1. Later rotations visit every chain once per player. Never expose other original prompts in room state.',
+    route='/api/sessions/{session_code}/prompts', method='post',
+    parameters=PLAYER_TOKEN,
+    requests=SubmitPromptRequest,
+    responses=documented_responses(SessionState, success=200, errors=(401, 403, 404, 409, 422)),
+    tags=['prompts'],
 )
-@app.route(route="sessions/{session_code}/uploads", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-def create_upload_link(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("create_upload_link")
+def submit_prompt(req: func.HttpRequest) -> func.HttpResponse:
+    return not_implemented('submit_prompt')
 
 
+@app.route(route='sessions/{session_code}/assignment', methods=['GET'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Confirm a clip for the current round",
-    description=(
-        "Record that this player's clip has uploaded. The server advances the round "
-        "when everyone has submitted. 200: accepted, returns the updated room. "
-        "404: no room with this code. 409: round is closed, or the player already submitted."
-    ),
-    requests=SubmitClipRequest,
-    responses=SessionState,
-    tags=["game"],
+    summary='Get my current chain input',
+    description='Composing only. Return kind=prompt and assigned text in round 1; return kind=pattern, previous_version_id and the previous saved pattern in rounds 2..N. Never return original prompts or full history in later rounds. Resolve assignment from authenticated player identity.',
+    route='/api/sessions/{session_code}/assignment', method='get',
+    parameters=PLAYER_TOKEN,
+    responses=documented_responses(AssignmentResponse, success=200, errors=(401, 403, 404, 409)),
+    tags=['game'],
 )
-@app.route(route="sessions/{session_code}/submissions", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-def submit_clip(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("submit_clip")
+def get_assignment(req: func.HttpRequest) -> func.HttpResponse:
+    return not_implemented('get_assignment')
 
 
+@app.route(route='sessions/{session_code}/submissions', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Get the clip to build on",
-    description=(
-        "Returns the previous contributor's clip. The original prompt is never returned. "
-        "200: short-lived read link to the clip. 404: no room with this code. "
-        "409: round not started, or no clip available for this player."
-    ),
-    responses=ClipLink,
-    tags=["game"],
+    summary='Submit my musical pattern',
+    description='Validate token, composing state, expected_round and assigned chain_id. Validate pattern and unique instrument IDs; persist an immutable contribution before counting it accepted. Same submission_id with identical content returns current state without another contribution; conflicting reuse or a second contribution conflicts. Retried accepted submissions remain idempotent after round advancement. Once all N contributions persist, advance exactly once, rotate assignments, clear current submission progress, or finish after round N. Use atomic/conditional persistence; never trust client identity.',
+    route='/api/sessions/{session_code}/submissions', method='post',
+    parameters=PLAYER_TOKEN,
+    requests=SubmitPatternRequest,
+    responses=documented_responses(SessionState, success=200, errors=(401, 403, 404, 409, 422)),
+    tags=['patterns'],
 )
-@app.route(route="sessions/{session_code}/clip", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def get_clip(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("get_clip")
+def submit_pattern(req: func.HttpRequest) -> func.HttpResponse:
+    return not_implemented('submit_pattern')
 
 
+@app.route(route='sessions/{session_code}/advance', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Advance the round (host only)",
-    description=(
-        "Close the current round for absent players so the game does not stall. "
-        "200: next round started. 403: caller is not the host. 409: round is not open."
-    ),
-    responses=SessionState,
-    tags=["game"],
+    summary='Advance a completed round (host only)',
+    description='Optional recovery endpoint, not a forced skip. Require composing, matching expected_round and expected_state_version, and all N contributions persisted. Advance exactly once or finish after round N. Reject stale/duplicate advancement; do not invent missing versions. Normal submissions auto-advance, so clients usually do not call this.',
+    route='/api/sessions/{session_code}/advance', method='post',
+    parameters=PLAYER_TOKEN,
+    requests=AdvanceRoundRequest,
+    responses=documented_responses(SessionState, success=200, errors=(401, 403, 404, 409, 422)),
+    tags=['game'],
 )
-@app.route(route="sessions/{session_code}/advance", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def advance_round(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("advance_round")
+    return not_implemented('advance_round')
 
 
+@app.route(route='sessions/{session_code}/reveal', methods=['GET'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Reveal all chains",
-    description=(
-        "Every chain with its original prompt, each stage, and its final mix. "
-        "200: all chains in round order. 404: no room with this code. "
-        "409: the game has not finished."
-    ),
-    responses=RevealResponse,
-    tags=["game"],
+    summary='Reveal completed musical chains',
+    description='Finished only, room members only. Return every original prompt and immutable pattern stage in ascending round order, plus final_version_id. No rendered audio mix is required.',
+    route='/api/sessions/{session_code}/reveal', method='get',
+    parameters=PLAYER_TOKEN,
+    responses=documented_responses(RevealResponse, success=200, errors=(401, 403, 404, 409)),
+    tags=['game'],
 )
-@app.route(route="sessions/{session_code}/reveal", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def reveal(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("reveal")
+    return not_implemented('reveal')
 
 
+@app.route(route='negotiate', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
-    summary="Get SignalR connection details",
-    description="Returns the URL and access token the browser needs for live updates. 200: connection details issued.",
-    responses=NegotiateResponse,
-    tags=["realtime"],
+    summary='Get room-scoped SignalR connection details',
+    description='Optional live-update transport. Authenticate player membership in requested room and scope delivery server-side to that room. Publish only state-change notifications, never tokens, hidden prompts or musical histories. Clients refetch state/assignment; polling remains a valid MVP alternative.',
+    route='/api/negotiate', method='post',
+    parameters=PLAYER_TOKEN,
+    requests=NegotiateRequest,
+    responses=documented_responses(NegotiateResponse, success=200, errors=(401, 403, 404, 422)),
+    tags=['realtime'],
 )
-@app.route(route="negotiate", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def negotiate(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented("negotiate")
+    return not_implemented('negotiate')
