@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "tempo": 120.0,
+  "step_count": 16,
+  "tracks": [
+    {
+      "instrument": "kick",
+      "steps": [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false]
+    },
+    {
+      "instrument": "snare",
+      "steps": [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false]
+    },
+    {
+      "instrument": "hihat",
+      "steps": [true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false]
+    }
+  ]
+}
