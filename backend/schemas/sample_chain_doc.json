@@ -1,0 +1,25 @@
+{
+  "id": "chain_1",
+  "session_code": "K7QX",
+  "original_prompt": "Upbeat 90s arcade boss battle",
+  "versions": [
+    {
+      "version_id": "chain_1_v1",
+      "submission_id": "sub_round1_p2",
+      "round": 1,
+      "player_id": "player_2",
+      "player_name": "Earl",
+      "pattern": {
+        "schema_version": "1.0",
+        "tempo": 120.0,
+        "step_count": 16,
+        "tracks": [
+          {
+            "instrument": "kick",
+            "steps": [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false]
+          }
+        ]
+      }
+    }
+  ]
+}
