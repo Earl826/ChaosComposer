@@ -4,8 +4,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models import MusicalPattern, PatternTrack
-from pattern_store import validate_musical_pattern, InMemoryChainRepository
+from models import MusicalPattern, PatternTrack, SubmitPatternRequest
+from pattern_store import validate_musical_pattern, InMemoryChainRepository, create_chain_document, record_pattern_submission, get_chain_assignment_for_round, get_session_reveal, ConflictError
 
 def make_track(instrument: str) -> PatternTrack:
     return PatternTrack(instrument=instrument, steps=[True] + [False] * 15)
@@ -50,3 +50,64 @@ def test_in_memory_repository_save_get_and_list():
 
     room1_chains = repo.list_chains_for_session("ROOM1")
     assert [c["id"] for c in room1_chains] == ["chain_1", "chain_2"]
+
+def test_submission_preserves_versions_and_hides_prompt_in_later_rounds():
+    repo = InMemoryChainRepository()
+    create_chain_document(repo, "K7QX", "chain_1", "Upbeat 90s arcade boss battle")
+
+    # Round 1 assignment should return the original prompt
+    r1_input = get_chain_assignment_for_round(repo, "K7QX", "chain_1", current_round=1)
+    assert r1_input.kind == "prompt"
+    assert r1_input.prompt == "Upbeat 90s arcade boss battle"
+
+    # Round 1 submission by Earl (120 BPM)
+    p1 = MusicalPattern(tempo=120.0, tracks=[make_track("kick")])
+    req1 = SubmitPatternRequest(chain_id="chain_1", expected_round=1, submission_id="sub_1", pattern=p1)
+    v1 = record_pattern_submission(repo, "K7QX", "player_2", "Earl", req1)
+    assert v1["version_id"] == "chain_1_v1"
+
+    # Round 2 assignment should return ONLY v1's pattern (no prompt)
+    r2_input = get_chain_assignment_for_round(repo, "K7QX", "chain_1", current_round=2)
+    assert r2_input.kind == "pattern"
+    assert r2_input.previous_version_id == "chain_1_v1"
+    assert r2_input.pattern.tempo == 120.0
+
+    # Round 2 submission by Barack (140 BPM)
+    p2 = MusicalPattern(tempo=140.0, tracks=[make_track("kick"), make_track("snare")])
+    req2 = SubmitPatternRequest(chain_id="chain_1", expected_round=2, submission_id="sub_2", pattern=p2)
+    v2 = record_pattern_submission(repo, "K7QX", "player_3", "Barack", req2)
+    assert v2["version_id"] == "chain_1_v2"
+
+    # Final reveal should contain both versions in order without overwriting
+    reveal = get_session_reveal(repo, "K7QX")
+    assert len(reveal.chains) == 1
+    assert len(reveal.chains[0].stages) == 2
+    assert reveal.chains[0].stages[0].pattern.tempo == 120.0
+    assert reveal.chains[0].stages[1].pattern.tempo == 140.0
+    assert reveal.chains[0].final_version_id == "chain_1_v2"
+
+
+def test_duplicate_and_out_of_order_submissions_rejected():
+    repo = InMemoryChainRepository()
+    create_chain_document(repo, "K7QX", "chain_1", "Test prompt")
+
+    pattern = MusicalPattern(tempo=120.0, tracks=[make_track("kick")])
+    req1 = SubmitPatternRequest(chain_id="chain_1", expected_round=1, submission_id="sub_1", pattern=pattern)
+
+    # First submission succeeds
+    first = record_pattern_submission(repo, "K7QX", "player_2", "Earl", req1)
+
+    # Exact retry with same submission_id is idempotent (returns same version, doesn't duplicate)
+    retry = record_pattern_submission(repo, "K7QX", "player_2", "Earl", req1)
+    assert retry == first
+    assert len(repo.get_chain("K7QX", "chain_1")["versions"]) == 1
+
+    # Second submission for the same round with a different submission_id raises ConflictError
+    req_dup_round = SubmitPatternRequest(chain_id="chain_1", expected_round=1, submission_id="sub_new", pattern=pattern)
+    with pytest.raises(ConflictError, match="already has a submission"):
+        record_pattern_submission(repo, "K7QX", "player_2", "Earl", req_dup_round)
+
+    # Skipping Round 2 and submitting Round 3 raises ConflictError
+    req_skip = SubmitPatternRequest(chain_id="chain_1", expected_round=3, submission_id="sub_3", pattern=pattern)
+    with pytest.raises(ConflictError, match="Expected round 2"):
+        record_pattern_submission(repo, "K7QX", "player_3", "Barack", req_skip)
