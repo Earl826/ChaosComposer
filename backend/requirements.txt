@@ -1,4 +1,6 @@
 annotated-types==0.8.0
+azure-core==1.41.0
+azure-cosmos==4.17.1
 azure-functions==2.3.0
 azure-functions-openapi==0.31.0
 iniconfig==2.3.1

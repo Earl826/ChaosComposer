@@ -1,5 +1,9 @@
+import json
+import os
+import azure.functions as func
+from pydantic import ValidationError
 from typing import Any, Protocol
-from models import MusicalPattern, PatternAssignment, PromptAssignment, SubmitPatternRequest, StageResult, ChainResult, RevealResponse
+from models import MusicalPattern, PatternAssignment, PromptAssignment, SubmitPatternRequest, StageResult, ChainResult, RevealResponse, ErrorResponse, AssignmentResponse
 
 ALLOWED_INSTRUMENTS = {"kick", "snare", "hihat", "clap", "tom", "bass", "synth", "piano"}
 
@@ -135,3 +139,58 @@ def get_session_reveal(repo: ChainRepository, session_code: str) -> RevealRespon
         ]
         chain_results.append(ChainResult(chain_id=doc["id"], original_prompt=doc["original_prompt"], stages=stages, final_version_id=stages[-1].version_id))
     return RevealResponse(session_code=session_code, chains=chain_results)
+
+_DEFAULT_MEMORY_REPO = InMemoryChainRepository()
+
+def get_chain_repository() -> ChainRepository:
+    """Returns CosmosChainRepository if Azure is setup, otherwise InMemoryChainRepository."""
+    conn_str = os.environ.get("COSMOS_CONNECTION_STRING")
+    db_name = os.environ.get("COSMOS_DATABASE_NAME", "musicgame")
+    container_name = os.environ.get("COSMOS_CHAINS_CONTAINER", "chains")
+    if conn_str:
+        from azure.cosmos import CosmosClient
+        client = CosmosClient.from_connection_string(conn_str)
+        database = client.get_database_client(db_name)
+        container = database.get_container_client(container_name)
+        return CosmosChainRepository(container)
+    return _DEFAULT_MEMORY_REPO
+
+def json_error(code: str, detail: str, status_code: int) -> func.HttpResponse:
+    """Gets an ErrorResponse to match models.py and function_app.py."""
+    body = ErrorResponse(code=code, detail=detail).model_dump_json()
+    return func.HttpResponse(body, status_code=status_code, mimetype="application/json")
+
+def handle_submit_pattern_http(req: func.HttpRequest, repo: ChainRepository, session_code: str, player_id: str, player_name: str) -> func.HttpResponse:
+    """HTTP wrapper for POST /api/sessions/{session_code}/submissions."""
+    try:
+        raw_body = req.get_json()
+        submit_req = SubmitPatternRequest.model_validate(raw_body)
+        saved_version = record_pattern_submission(repo=repo, session_code=session_code, player_id=player_id, player_name=player_name, request=submit_req)
+        return func.HttpResponse(json.dumps(saved_version), status_code=200, mimetype="application/json")
+    except (ValueError, ValidationError) as exc:
+        return json_error("invalid_pattern", str(exc), 422)
+    except NotFoundError as exc:
+        return json_error("not_found", str(exc), 404)
+    except ConflictError as exc:
+        return json_error("conflict", str(exc), 409)
+
+def handle_get_assignment_http(repo: ChainRepository, session_code: str, chain_id: str, current_round: int) -> func.HttpResponse:
+    """HTTP wrapper for GET /api/sessions/{session_code}/assignment."""
+    try:
+        assignment = get_chain_assignment_for_round(repo=repo, session_code=session_code, chain_id=chain_id, current_round=current_round)
+        response_model = AssignmentResponse(assignment=assignment)
+        return func.HttpResponse(response_model.model_dump_json(), status_code=200, mimetype="application/json")
+    except NotFoundError as exc:
+        return json_error("not_found", str(exc), 404)
+    except ConflictError as exc:
+        return json_error("conflict", str(exc), 409)
+
+def handle_reveal_http(repo: ChainRepository, session_code: str) -> func.HttpResponse:
+    """HTTP wrapper for GET /api/sessions/{session_code}/reveal."""
+    try:
+        reveal_data = get_session_reveal(repo=repo, session_code=session_code)
+        return func.HttpResponse(reveal_data.model_dump_json(), status_code=200, mimetype="application/json")
+    except NotFoundError as exc:
+        return json_error("not_found", str(exc), 404)
+    except ConflictError as exc:
+        return json_error("conflict", str(exc), 409)

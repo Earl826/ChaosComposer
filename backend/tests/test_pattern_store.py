@@ -1,11 +1,24 @@
+import json
 import sys
 from pathlib import Path
+import azure.functions as func
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from models import MusicalPattern, PatternTrack, SubmitPatternRequest
-from pattern_store import validate_musical_pattern, InMemoryChainRepository, create_chain_document, record_pattern_submission, get_chain_assignment_for_round, get_session_reveal, ConflictError
+from pattern_store import (
+    ConflictError,
+    InMemoryChainRepository,
+    create_chain_document,
+    get_chain_assignment_for_round,
+    get_session_reveal,
+    handle_get_assignment_http,
+    handle_reveal_http,
+    handle_submit_pattern_http,
+    record_pattern_submission,
+    validate_musical_pattern,
+)
 
 def make_track(instrument: str) -> PatternTrack:
     return PatternTrack(instrument=instrument, steps=[True] + [False] * 15)
@@ -111,3 +124,62 @@ def test_duplicate_and_out_of_order_submissions_rejected():
     req_skip = SubmitPatternRequest(chain_id="chain_1", expected_round=3, submission_id="sub_3", pattern=pattern)
     with pytest.raises(ConflictError, match="Expected round 2"):
         record_pattern_submission(repo, "K7QX", "player_3", "Barack", req_skip)
+
+def test_http_handlers_return_expected_status_codes():
+    repo = InMemoryChainRepository()
+    create_chain_document(repo, "K7QX", "chain_1", "Cyberpunk synthwave chase")
+
+    # 1. Valid submission -> 200 OK
+    valid_body = {
+        "chain_id": "chain_1",
+        "expected_round": 1,
+        "submission_id": "sub_http_1",
+        "pattern": {
+            "schema_version": "1.0",
+            "tempo": 125.0,
+            "step_count": 16,
+            "tracks": [{"instrument": "synth", "steps": [True] + [False] * 15}],
+        },
+    }
+    req_ok = func.HttpRequest(
+        method="POST",
+        url="/api/sessions/K7QX/submissions",
+        body=json.dumps(valid_body).encode("utf-8"),
+    )
+    resp_ok = handle_submit_pattern_http(req_ok, repo, "K7QX", "p2", "Earl")
+    assert resp_ok.status_code == 200
+
+    # 2. Invalid instrument -> 422 Unprocessable Entity
+    invalid_body = {**valid_body, "submission_id": "sub_http_2", "pattern": {
+        "schema_version": "1.0",
+        "tempo": 125.0,
+        "step_count": 16,
+        "tracks": [{"instrument": "bagpipes", "steps": [True] + [False] * 15}],
+    }}
+    req_422 = func.HttpRequest(
+        method="POST",
+        url="/api/sessions/K7QX/submissions",
+        body=json.dumps(invalid_body).encode("utf-8"),
+    )
+    resp_422 = handle_submit_pattern_http(req_422, repo, "K7QX", "p2", "Earl")
+    assert resp_422.status_code == 422
+
+    # 3. Conflicting round submission -> 409 Conflict
+    conflict_body = {**valid_body, "submission_id": "sub_http_different"}
+    req_409 = func.HttpRequest(
+        method="POST",
+        url="/api/sessions/K7QX/submissions",
+        body=json.dumps(conflict_body).encode("utf-8"),
+    )
+    resp_409 = handle_submit_pattern_http(req_409, repo, "K7QX", "p2", "Earl")
+    assert resp_409.status_code == 409
+
+    # 4. Assignment for Round 2 -> 200 OK with previous pattern
+    resp_assign = handle_get_assignment_http(repo, "K7QX", "chain_1", current_round=2)
+    assert resp_assign.status_code == 200
+    assert json.loads(resp_assign.get_body())["assignment"]["kind"] == "pattern"
+
+    # 5. Reveal -> 200 OK
+    resp_reveal = handle_reveal_http(repo, "K7QX")
+    assert resp_reveal.status_code == 200
+    assert len(json.loads(resp_reveal.get_body())["chains"]) == 1
