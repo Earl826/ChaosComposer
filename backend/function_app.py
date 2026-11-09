@@ -23,6 +23,13 @@ from models import (
     SubmitPromptRequest, AssignmentResponse, SubmitPatternRequest,
     AdvanceRoundRequest, RevealResponse, NegotiateRequest, NegotiateResponse,
 )
+from pattern_store import (
+    get_chain_repository,
+    handle_get_assignment_http,
+    handle_reveal_http,
+    handle_submit_pattern_http,
+    json_error,
+)
 from typing import Any, Literal
 from pydantic import BaseModel
 
@@ -191,8 +198,23 @@ def submit_prompt(req: func.HttpRequest) -> func.HttpResponse:
     tags=['game'],
 )
 def get_assignment(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('get_assignment')
+    player_token = req.headers.get("X-Player-Token", "").strip()
+    if not player_token:
+        return json_error("unauthorized", "Missing X-Player-Token header.", 401)
 
+    session_code = req.route_params.get("session_code", "")
+    chain_id = req.params.get("chain_id", "chain_1")
+    try:
+        current_round = int(req.params.get("round", "1"))
+    except ValueError:
+        return json_error("invalid_round", "Round parameter must be an integer.", 422)
+
+    return handle_get_assignment_http(
+        repo=get_chain_repository(),
+        session_code=session_code,
+        chain_id=chain_id,
+        current_round=current_round,
+    )
 
 @app.route(route='sessions/{session_code}/submissions', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
@@ -205,8 +227,20 @@ def get_assignment(req: func.HttpRequest) -> func.HttpResponse:
     tags=['patterns'],
 )
 def submit_pattern(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('submit_pattern')
+    player_token = req.headers.get("X-Player-Token", "").strip()
+    if not player_token:
+        return json_error("unauthorized", "Missing X-Player-Token header.", 401)
 
+    session_code = req.route_params.get("session_code", "")
+    player_name = req.headers.get("X-Player-Name", player_token)
+
+    return handle_submit_pattern_http(
+        req=req,
+        repo=get_chain_repository(),
+        session_code=session_code,
+        player_id=player_token,
+        player_name=player_name,
+    )
 
 @app.route(route='sessions/{session_code}/advance', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
@@ -232,8 +266,15 @@ def advance_round(req: func.HttpRequest) -> func.HttpResponse:
     tags=['game'],
 )
 def reveal(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('reveal')
+    player_token = req.headers.get("X-Player-Token", "").strip()
+    if not player_token:
+        return json_error("unauthorized", "Missing X-Player-Token header.", 401)
 
+    session_code = req.route_params.get("session_code", "")
+    return handle_reveal_http(
+        repo=get_chain_repository(),
+        session_code=session_code,
+    )
 
 @app.route(route='negotiate', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
