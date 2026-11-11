@@ -141,7 +141,7 @@ class CosmosChainRepository:
             try:
                 document = self._container.read_item(item=chain_id, partition_key=session_code)
             except CosmosResourceNotFoundError as exc:
-                if exc.sub_status not in (None, 0):
+                if getattr(exc, "sub_status", None) not in (None, 0):
                     raise
                 # A missing container can also surface as a 404 during a point read.
                 self._container.read()
