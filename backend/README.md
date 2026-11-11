@@ -66,9 +66,10 @@ host storage uses `UseDevelopmentStorage=true` with Azurite.
   container metadata and verifies the `/roomId` partition. A 503 indicates
   a configuration, permission or storage failure. Operator logs contain the
   diagnostic message.
-- `GET /api/docs` and `GET /api/openapi.json` are public. Session and
-  negotiate schemas describe the proposed gameplay contract. All gameplay
-  routes return 501 while player authentication and game state are unfinished.
+- `GET /api/docs` and `GET /api/openapi.json` are public. The API generates the
+  OpenAPI schema from route metadata at runtime. Session and negotiate schemas
+  describe the proposed gameplay contract. All gameplay routes return 501
+  while player authentication and game state are unfinished.
 
 The repository handles conditional updates for a single chain. Submission IDs
 are scoped to that chain. Keep the same ID, player, round and pattern when

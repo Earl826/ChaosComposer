@@ -23,5 +23,4 @@ __azurite_db*__.json
 *.log
 *.zip
 README.md
-openapi.json
 swagger.html
