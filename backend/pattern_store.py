@@ -3,10 +3,13 @@ import os
 from contextlib import contextmanager
 from copy import deepcopy
 from threading import Lock
+from urllib.parse import urlsplit
+from uuid import UUID
 
 from azure.core import MatchConditions
 import azure.functions as func
 from azure.core.exceptions import AzureError, ClientAuthenticationError, ServiceRequestError, ServiceResponseError
+from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import (
     CosmosAccessConditionFailedError,
     CosmosClientTimeoutError,
@@ -14,6 +17,7 @@ from azure.cosmos.exceptions import (
     CosmosResourceExistsError,
     CosmosResourceNotFoundError,
 )
+from azure.identity import AzureCliCredential, ManagedIdentityCredential
 from pydantic import ValidationError
 from typing import Any, Protocol
 from models import MusicalPattern, PatternAssignment, PromptAssignment, SubmitPatternRequest, StageResult, ChainResult, RevealResponse, ErrorResponse, AssignmentResponse
@@ -33,6 +37,10 @@ class NotFoundError(Exception):
 
 class CosmosStoreError(Exception):
     """Cosmos failed to complete a storage operation."""
+
+
+class CosmosConfigurationError(CosmosStoreError):
+    """Cosmos settings are missing or invalid."""
 
 
 class CosmosAccessError(CosmosStoreError):
@@ -275,20 +283,66 @@ def get_session_reveal(repo: ChainRepository, session_code: str) -> RevealRespon
         chain_results.append(ChainResult(chain_id=doc["id"], original_prompt=doc["original_prompt"], stages=stages, final_version_id=stages[-1].version_id))
     return RevealResponse(session_code=session_code, chains=chain_results)
 
-_DEFAULT_MEMORY_REPO = InMemoryChainRepository()
+def required_cosmos_setting(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise CosmosConfigurationError(f"Missing required app setting {name}.")
+    return value
 
-def get_chain_repository() -> ChainRepository:
-    """Returns CosmosChainRepository if Azure is setup, otherwise InMemoryChainRepository."""
-    conn_str = os.environ.get("COSMOS_CONNECTION_STRING")
-    db_name = os.environ.get("COSMOS_DATABASE_NAME", "musicgame")
-    container_name = os.environ.get("COSMOS_CHAINS_CONTAINER", "chains")
-    if conn_str:
-        from azure.cosmos import CosmosClient
-        client = CosmosClient.from_connection_string(conn_str)
-        database = client.get_database_client(db_name)
-        container = database.get_container_client(container_name)
+
+def _create_cosmos_repository() -> CosmosChainRepository:
+    endpoint = required_cosmos_setting("COSMOS_ENDPOINT")
+    database_name = required_cosmos_setting("COSMOS_DATABASE_NAME")
+    container_name = required_cosmos_setting("COSMOS_CHAINS_CONTAINER")
+    auth_mode = required_cosmos_setting("COSMOS_AUTH_MODE")
+    try:
+        url = urlsplit(endpoint)
+        valid_endpoint = (
+            url.scheme == "https"
+            and url.hostname is not None
+            and url.username is None
+            and url.port is None
+            and url.path in ("", "/")
+            and not (url.query or url.fragment)
+            and not any(character.isspace() for character in endpoint)
+        )
+    except ValueError:
+        valid_endpoint = False
+    if not valid_endpoint:
+        raise CosmosConfigurationError("COSMOS_ENDPOINT must be a plain HTTPS account URL.")
+
+    if auth_mode == "managed_identity":
+        client_id = required_cosmos_setting("AZURE_CLIENT_ID")
+        try:
+            UUID(client_id)
+        except ValueError:
+            raise CosmosConfigurationError("AZURE_CLIENT_ID must be the managed identity's client ID.") from None
+    elif auth_mode != "azure_cli" or os.environ.get("WEBSITE_SITE_NAME"):
+        raise CosmosConfigurationError(
+            "Set COSMOS_AUTH_MODE to managed_identity on Azure or azure_cli for local development."
+        )
+
+    with cosmos_operation():
+        if auth_mode == "managed_identity":
+            credential = ManagedIdentityCredential(client_id=client_id)
+        else:
+            credential = AzureCliCredential()
+        client = CosmosClient(endpoint, credential=credential)
+        container = client.get_database_client(database_name).get_container_client(container_name)
         return CosmosChainRepository(container)
-    return _DEFAULT_MEMORY_REPO
+
+
+_cosmos_repository: CosmosChainRepository | None = None
+_cosmos_repository_lock = Lock()
+
+
+def get_chain_repository() -> CosmosChainRepository:
+    """Create and reuse one Cosmos client per worker after successful initialization."""
+    global _cosmos_repository
+    with _cosmos_repository_lock:
+        if _cosmos_repository is None:
+            _cosmos_repository = _create_cosmos_repository()
+        return _cosmos_repository
 
 def json_error(code: str, detail: str, status_code: int) -> func.HttpResponse:
     """Gets an ErrorResponse to match models.py and function_app.py."""
