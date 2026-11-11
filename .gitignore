@@ -17,6 +17,8 @@ lerna-debug.log*
 
 # Local config and secrets (never commit)
 .env
+.env.*
+!.env.example
 .secrets
 /secrets
 appsettings.json
@@ -31,6 +33,9 @@ env/
 env.bak/
 ENV/
 __pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
 *.py[cod]
 *$py.class
 
