@@ -99,7 +99,11 @@ def cosmos_readiness(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="openapi.json", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def openapi_json(req: func.HttpRequest) -> func.HttpResponse:
-    return func.HttpResponse(get_openapi_json(), mimetype="application/json")
+    spec = get_openapi_json(
+        title="ChaosComposer API",
+        description="Session and negotiate operations return 501. Their schemas describe the planned gameplay API.",
+    )
+    return func.HttpResponse(spec, mimetype="application/json")
 
 
 @app.route(route="docs", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)

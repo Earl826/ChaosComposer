@@ -3,10 +3,20 @@
   "info": {
     "title": "API",
     "version": "1.0.0",
-    "description": "Auto-generated OpenAPI documentation. Markdown supported in descriptions (CommonMark).",
+    "description": "Session and negotiate operations return 501. Their schemas describe the planned gameplay API.",
     "summary": "API"
   },
   "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Check API liveness",
+        "responses": {
+          "200": {
+            "description": "API is running"
+          }
+        }
+      }
+    },
     "/api/negotiate": {
       "post": {
         "summary": "Get SignalR connection details",

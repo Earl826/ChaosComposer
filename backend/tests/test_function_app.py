@@ -1,9 +1,8 @@
 import json
+from unittest.mock import Mock
 
 import azure.functions as func
 import pytest
-
-from unittest.mock import Mock
 
 import function_app
 from function_app import app
@@ -97,3 +96,16 @@ def test_readiness_returns_safe_error_for_failed_credentials(functions, monkeypa
         "code": "storage_unavailable",
         "detail": "Game storage is unavailable.",
     }
+
+
+
+def test_openapi_lists_health_and_marks_gameplay_as_planned(functions):
+    request = func.HttpRequest(method="GET", url="/api/openapi.json", body=b"")
+
+    response = functions["openapi_json"].get_user_function()(request)
+    spec = json.loads(response.get_body())
+
+    assert response.status_code == 200
+    assert "200" in spec["paths"]["/api/health"]["get"]["responses"]
+    assert "501" in spec["paths"]["/api/sessions"]["post"]["responses"]
+    assert "return 501" in spec["info"]["description"]
