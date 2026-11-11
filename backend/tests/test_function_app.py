@@ -30,3 +30,22 @@ def test_health_reports_api_liveness(functions):
         "status": "ok",
         "service": "ChaosComposer API",
     }
+
+
+
+@pytest.mark.parametrize("name", ["get_assignment", "submit_pattern", "reveal"])
+def test_prototype_gameplay_routes_return_only_501(functions, name):
+    function = functions[name]
+    trigger = function.get_trigger().get_dict_repr()
+    request = func.HttpRequest(
+        method=trigger["methods"][0].value,
+        url="/api/" + trigger["route"].format(session_code="K7QX"),
+        headers={"X-Player-Token": "example", "X-Player-Name": "Example"},
+        route_params={"session_code": "K7QX"},
+        body=b"",
+    )
+
+    response = function.get_user_function()(request)
+
+    assert response.status_code == 501
+    assert json.loads(response.get_body()) == {"code": "not_implemented", "detail": name}
