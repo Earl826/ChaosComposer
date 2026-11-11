@@ -1,6 +1,7 @@
 import json
 import os
 import azure.functions as func
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from pydantic import ValidationError
 from typing import Any, Protocol
 from models import MusicalPattern, PatternAssignment, PromptAssignment, SubmitPatternRequest, StageResult, ChainResult, RevealResponse, ErrorResponse, AssignmentResponse
@@ -50,29 +51,59 @@ class InMemoryChainRepository:
         return sorted(chains, key=lambda d: d["id"])
 
 
+
 class CosmosChainRepository:
-    """Drop-in Azure Cosmos DB repository (partition key: /session_code)."""
+    """Cosmos DB repository using the /roomId partition key."""
+
     def __init__(self, container_client: Any) -> None:
         self._container = container_client
 
-    def get_chain(self, session_code: str, chain_id: str) -> dict[str, Any] | None:
+    def get_chain(
+        self, session_code: str, chain_id: str
+    ) -> dict[str, Any] | None:
         try:
-            return self._container.read_item(item=chain_id, partition_key=session_code)
-        except Exception:
+            document = self._container.read_item(item=chain_id, partition_key=session_code)
+        except CosmosResourceNotFoundError:
             return None
+        return document if document.get("type") == "chain" else None
 
     def save_chain(self, chain_doc: dict[str, Any]) -> None:
+        if (
+            chain_doc.get("type") != "chain"
+            or not chain_doc.get("session_code")
+            or chain_doc.get("roomId") != chain_doc["session_code"]
+        ):
+            raise ValueError("Expected a chain document with roomId matching session_code.")
+
         self._container.upsert_item(body=chain_doc)
 
-    def list_chains_for_session(self, session_code: str) -> list[dict[str, Any]]:
-        query = "SELECT * FROM c WHERE c.session_code = @session_code ORDER BY c.id"
-        items = list(self._container.query_items(query=query, parameters=[{"name": "@session_code", "value": session_code}], partition_key=session_code,))
-        return items
+    def list_chains_for_session(
+        self, session_code: str
+    ) -> list[dict[str, Any]]:
+        query = (
+            "SELECT * FROM c "
+            "WHERE c.roomId = @roomId "
+            "AND c.type = 'chain' "
+            "ORDER BY c.id"
+        )
+
+        return list(
+            self._container.query_items(
+                query=query,
+                parameters=[
+                    {"name": "@roomId", "value": session_code}
+                ],
+                partition_key=session_code,
+            )
+        )
+
 
 def create_chain_document(repo: ChainRepository, session_code: str, chain_id: str, original_prompt: str) -> dict[str, Any]:
     """Creates a new musical chain matching sample_chain_doc.json."""
     chain_doc = {
         "id": chain_id,
+        "roomId": session_code,
+        "type": "chain",
         "session_code": session_code,
         "original_prompt": original_prompt,
         "versions": [],
