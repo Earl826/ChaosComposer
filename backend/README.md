@@ -35,6 +35,12 @@ func start --enableAuth
 Invoke-RestMethod http://127.0.0.1:7071/api/health
 ```
 
+Confirm that Core Tools reports `Found Python version 3.14.x`. If it selects
+an older version, use `Get-Command python, python3, py` to check which
+interpreter or launcher takes precedence in the terminal. Check Windows
+**Settings** → **Apps** → **Advanced app settings** → **App execution aliases**
+if one of those commands resolves to an older Windows Apps alias.
+
 Health, API docs and the test suite run without Azure access. To exercise
 Cosmos locally, run `az login` and use an Azure CLI identity with a Cosmos DB
 for NoSQL data-plane assignment on the target container. A Data Reader role
@@ -119,17 +125,20 @@ Consumption. [Runtime support](https://learn.microsoft.com/azure/azure-functions
 4. **Set Python 3.14 and publish.** From `backend`, with the 3.14 environment
    active, use Azure CLI and Core Tools v4. Confirm Python 3.14 appears in the
    regional runtime listing before changing the stack. The change can restart
-   the app. Package source at the ZIP root and use a remote build for the
-   Linux dependencies.
+   the app. The ZIP command packages the committed backend source at the
+   archive root. Run it from the approved commit. The remote build installs
+   the Python dependencies for Linux.
 
    ```powershell
    az functionapp list-flexconsumption-runtimes --subscription $subscription --location germanywestcentral -o table
    az functionapp runtime config set --subscription $subscription --resource-group $rg --name $app --runtime-version 3.14
    az functionapp runtime config show --subscription $subscription --resource-group $rg --name $app
 
-   $env:FUNCTIONS_WORKER_RUNTIME = 'python'
-   func pack --no-build --output .venv/chaoscomposer.zip
-   az functionapp deployment source config-zip --subscription $subscription --resource-group $rg --name $app --src .venv/chaoscomposer.zip --build-remote true
+   $package = Join-Path (Resolve-Path .venv).Path 'chaoscomposer-source.zip'
+   git -C .. archive --format=zip "--output=$package" HEAD:backend function_app.py host.json models.py pattern_store.py requirements.txt game
+   if ($LASTEXITCODE -ne 0) { throw 'Backend packaging failed.' }
+   python -m zipfile -l $package
+   az functionapp deployment source config-zip --subscription $subscription --resource-group $rg --name $app --src $package --build-remote true
    ```
 
    The Flex deployment uses your Azure CLI sign-in and existing deployment
