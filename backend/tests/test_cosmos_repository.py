@@ -114,6 +114,32 @@ def test_cosmos_distinguishes_missing_container_from_missing_chain():
         CosmosChainRepository(container).get_chain("DEMO01", "chain_1")
 
 
+
+@pytest.fixture
+def not_found_without_sub_status():
+    error = CosmosResourceNotFoundError(status_code=404)
+    del error.sub_status
+    return error
+
+
+def test_missing_chain_without_sub_status_checks_container(not_found_without_sub_status):
+    container = Mock()
+    container.read_item.side_effect = not_found_without_sub_status
+
+    assert CosmosChainRepository(container).get_chain("DEMO01", "chain_1") is None
+    container.read.assert_called_once_with()
+
+
+def test_missing_container_without_sub_status_is_storage_error(not_found_without_sub_status):
+    container = Mock()
+    container.read_item.side_effect = not_found_without_sub_status
+    container.read.side_effect = CosmosResourceNotFoundError(status_code=404)
+
+    with pytest.raises(CosmosStoreError, match="configured database and container"):
+        CosmosChainRepository(container).get_chain("DEMO01", "chain_1")
+    container.read.assert_called_once_with()
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
