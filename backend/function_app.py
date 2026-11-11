@@ -1,5 +1,6 @@
 """ChaosComposer HTTP API and proposed gameplay contracts."""
 import json
+import logging
 from copy import deepcopy
 import azure.functions as func
 from azure_functions_openapi.decorator import openapi
@@ -13,8 +14,10 @@ from models import (
 )
 from typing import Any, Literal
 from pydantic import BaseModel
+from pattern_store import CosmosStoreError, get_chain_repository, json_error
 
 app = func.FunctionApp()
+logger = logging.getLogger(__name__)
 
 PLAYER_TOKEN = [{
     "name": "X-Player-Token", "in": "header", "required": True,
@@ -77,6 +80,19 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps({"status": "ok", "service": "ChaosComposer API"}),
         status_code=200,
+        mimetype="application/json",
+    )
+
+
+@app.route(route="health/cosmos", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
+def cosmos_readiness(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        get_chain_repository().check_ready()
+    except CosmosStoreError as exc:
+        logger.warning("Cosmos readiness failed: %s", exc)
+        return json_error("storage_unavailable", "Game storage is unavailable.", 503)
+    return func.HttpResponse(
+        json.dumps({"status": "ok", "dependency": "cosmos"}),
         mimetype="application/json",
     )
 

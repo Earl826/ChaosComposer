@@ -18,6 +18,7 @@ from pattern_store import (
     ConflictError,
     CosmosAccessError,
     CosmosChainRepository,
+    CosmosConfigurationError,
     CosmosStoreError,
     CosmosUnavailableError,
     InMemoryChainRepository,
@@ -267,3 +268,23 @@ def test_in_memory_repository_rejects_stale_snapshots():
         repo.save_chain(stale)
 
     assert repo.get_chain("DEMO01", "chain_1")["versions"] == [{"version_id": "winner"}]
+
+
+
+def test_readiness_accepts_room_partition_without_reading_game_data():
+    container = Mock()
+    container.read.return_value = {"partitionKey": {"paths": ["/roomId"]}}
+
+    CosmosChainRepository(container).check_ready()
+
+    container.read.assert_called_once_with()
+    container.read_item.assert_not_called()
+    container.query_items.assert_not_called()
+
+
+def test_readiness_rejects_wrong_partition():
+    container = Mock()
+    container.read.return_value = {"partitionKey": {"paths": ["/session_code"]}}
+
+    with pytest.raises(CosmosConfigurationError, match="/roomId"):
+        CosmosChainRepository(container).check_ready()

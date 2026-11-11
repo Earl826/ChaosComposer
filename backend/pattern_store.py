@@ -127,6 +127,13 @@ class CosmosChainRepository:
     def __init__(self, container_client: Any) -> None:
         self._container = container_client
 
+    def check_ready(self) -> None:
+        """Verify authenticated access to the expected Cosmos container metadata."""
+        with cosmos_operation():
+            properties = self._container.read()
+        if properties.get("partitionKey", {}).get("paths") != ["/roomId"]:
+            raise CosmosConfigurationError("The Cosmos container must use /roomId as its partition key.")
+
     def get_chain(
         self, session_code: str, chain_id: str
     ) -> dict[str, Any] | None:
