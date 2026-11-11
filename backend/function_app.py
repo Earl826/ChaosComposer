@@ -15,7 +15,7 @@ import json
 from copy import deepcopy
 import azure.functions as func
 from azure_functions_openapi.decorator import openapi
-from azure_functions_openapi.openapi import get_openapi_json
+from azure_functions_openapi.spec import get_openapi_json
 from azure_functions_openapi.swagger_ui import render_swagger_ui
 from models import (
     ErrorResponse, CreateSessionRequest, JoinSessionRequest, SessionCreated,
@@ -81,6 +81,22 @@ def not_implemented(name: str) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps({"code": "not_implemented", "detail": name}),
         status_code=501, mimetype="application/json",
+    )
+
+
+@app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@openapi(
+    summary="Check API liveness",
+    description="Checks whether the HTTP API is running.",
+    route="/api/health", method="get",
+    responses={200: {"description": "API is running"}},
+    tags=["health"],
+)
+def health(req: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse(
+        json.dumps({"status": "ok", "service": "ChaosComposer API"}),
+        status_code=200,
+        mimetype="application/json",
     )
 
 
