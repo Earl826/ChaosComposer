@@ -1,5 +1,7 @@
 {
   "id": "chain_1",
+  "roomId": "K7QX",
+  "type": "chain",
   "session_code": "K7QX",
   "original_prompt": "Upbeat 90s arcade boss battle",
   "versions": [

@@ -1,21 +1,10 @@
-"""MVP Azure Functions API stubs: editable 16-step patterns, not audio uploads.
-
-All business endpoints intentionally return 501 until implemented.
-OpenAPI metadata describes the TARGET contract, not implemented behaviour.
-Requires existing azure-functions / azure-functions-openapi dependencies and
-Pydantic 2.x. Keep models_mvp.py alongside this file.
-
-Proposed rules: 4-6 ready players; frozen roster at start; one prompt per player;
-first assignment excludes the prompt author; N composing rounds for N players;
-auto-advance only after all contributions persist. No forced skip in this MVP.
-Do not store authoritative game state in process globals: use persisted state
-and conditional/atomic updates to protect concurrent advancement.
-"""
+"""ChaosComposer HTTP API and proposed gameplay contracts."""
 import json
+import logging
 from copy import deepcopy
 import azure.functions as func
 from azure_functions_openapi.decorator import openapi
-from azure_functions_openapi.openapi import get_openapi_json
+from azure_functions_openapi.spec import get_openapi_json
 from azure_functions_openapi.swagger_ui import render_swagger_ui
 from models import (
     ErrorResponse, CreateSessionRequest, JoinSessionRequest, SessionCreated,
@@ -23,17 +12,12 @@ from models import (
     SubmitPromptRequest, AssignmentResponse, SubmitPatternRequest,
     AdvanceRoundRequest, RevealResponse, NegotiateRequest, NegotiateResponse,
 )
-from pattern_store import (
-    get_chain_repository,
-    handle_get_assignment_http,
-    handle_reveal_http,
-    handle_submit_pattern_http,
-    json_error,
-)
 from typing import Any, Literal
 from pydantic import BaseModel
+from pattern_store import CosmosStoreError, get_chain_repository, json_error
 
 app = func.FunctionApp()
+logger = logging.getLogger(__name__)
 
 PLAYER_TOKEN = [{
     "name": "X-Player-Token", "in": "header", "required": True,
@@ -84,9 +68,42 @@ def not_implemented(name: str) -> func.HttpResponse:
     )
 
 
+@app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@openapi(
+    summary="Check API liveness",
+    description="Checks whether the HTTP API is running.",
+    route="/api/health", method="get",
+    responses={200: {"description": "API is running"}},
+    tags=["health"],
+)
+def health(req: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse(
+        json.dumps({"status": "ok", "service": "ChaosComposer API"}),
+        status_code=200,
+        mimetype="application/json",
+    )
+
+
+@app.route(route="health/cosmos", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
+def cosmos_readiness(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        get_chain_repository().check_ready()
+    except CosmosStoreError as exc:
+        logger.warning("Cosmos readiness failed: %s", exc)
+        return json_error("storage_unavailable", "Game storage is unavailable.", 503)
+    return func.HttpResponse(
+        json.dumps({"status": "ok", "dependency": "cosmos"}),
+        mimetype="application/json",
+    )
+
+
 @app.route(route="openapi.json", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def openapi_json(req: func.HttpRequest) -> func.HttpResponse:
-    return func.HttpResponse(get_openapi_json(), mimetype="application/json")
+    spec = get_openapi_json(
+        title="ChaosComposer API",
+        description="Session and negotiate operations return 501. Their schemas describe the planned gameplay API.",
+    )
+    return func.HttpResponse(spec, mimetype="application/json")
 
 
 @app.route(route="docs", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -198,23 +215,8 @@ def submit_prompt(req: func.HttpRequest) -> func.HttpResponse:
     tags=['game'],
 )
 def get_assignment(req: func.HttpRequest) -> func.HttpResponse:
-    player_token = req.headers.get("X-Player-Token", "").strip()
-    if not player_token:
-        return json_error("unauthorized", "Missing X-Player-Token header.", 401)
+    return not_implemented('get_assignment')
 
-    session_code = req.route_params.get("session_code", "")
-    chain_id = req.params.get("chain_id", "chain_1")
-    try:
-        current_round = int(req.params.get("round", "1"))
-    except ValueError:
-        return json_error("invalid_round", "Round parameter must be an integer.", 422)
-
-    return handle_get_assignment_http(
-        repo=get_chain_repository(),
-        session_code=session_code,
-        chain_id=chain_id,
-        current_round=current_round,
-    )
 
 @app.route(route='sessions/{session_code}/submissions', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
@@ -227,20 +229,8 @@ def get_assignment(req: func.HttpRequest) -> func.HttpResponse:
     tags=['patterns'],
 )
 def submit_pattern(req: func.HttpRequest) -> func.HttpResponse:
-    player_token = req.headers.get("X-Player-Token", "").strip()
-    if not player_token:
-        return json_error("unauthorized", "Missing X-Player-Token header.", 401)
+    return not_implemented('submit_pattern')
 
-    session_code = req.route_params.get("session_code", "")
-    player_name = req.headers.get("X-Player-Name", player_token)
-
-    return handle_submit_pattern_http(
-        req=req,
-        repo=get_chain_repository(),
-        session_code=session_code,
-        player_id=player_token,
-        player_name=player_name,
-    )
 
 @app.route(route='sessions/{session_code}/advance', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
@@ -266,15 +256,8 @@ def advance_round(req: func.HttpRequest) -> func.HttpResponse:
     tags=['game'],
 )
 def reveal(req: func.HttpRequest) -> func.HttpResponse:
-    player_token = req.headers.get("X-Player-Token", "").strip()
-    if not player_token:
-        return json_error("unauthorized", "Missing X-Player-Token header.", 401)
+    return not_implemented('reveal')
 
-    session_code = req.route_params.get("session_code", "")
-    return handle_reveal_http(
-        repo=get_chain_repository(),
-        session_code=session_code,
-    )
 
 @app.route(route='negotiate', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
 @openapi(
