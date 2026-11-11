@@ -58,7 +58,9 @@ def test_in_memory_repository_save_get_and_list():
     repo.save_chain(chain_a)
     repo.save_chain(other_room_chain)
 
-    assert repo.get_chain("ROOM1", "chain_1") == chain_a
+    saved = repo.get_chain("ROOM1", "chain_1")
+    assert saved.pop("_etag")
+    assert saved == chain_a
     assert repo.get_chain("ROOM1", "non_existent") is None
 
     room1_chains = repo.list_chains_for_session("ROOM1")

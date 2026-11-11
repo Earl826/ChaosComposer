@@ -1,17 +1,30 @@
+from copy import deepcopy
 from unittest.mock import Mock
+
+from azure.core import MatchConditions
 
 import pytest
 from azure.core.exceptions import ServiceRequestError
-from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
+from azure.cosmos.exceptions import (
+    CosmosAccessConditionFailedError,
+    CosmosHttpResponseError,
+    CosmosResourceExistsError,
+    CosmosResourceNotFoundError,
+)
+
+from models import SubmitPatternRequest
 
 from pattern_store import (
+    ConflictError,
     CosmosAccessError,
     CosmosChainRepository,
     CosmosStoreError,
     CosmosUnavailableError,
     InMemoryChainRepository,
+    StaleChainError,
     create_chain_document,
     handle_get_assignment_http,
+    record_pattern_submission,
 )
 
 
@@ -41,19 +54,18 @@ def test_cosmos_repository_uses_room_id_partition():
         "versions": [],
     }
 
-    container.read_item.return_value = chain
-    container.query_items.return_value = [chain]
+    persisted = {**chain, "_etag": '"1"'}
+    container.read_item.return_value = persisted
+    container.query_items.return_value = [persisted]
 
     repo = CosmosChainRepository(container)
 
     repo.save_chain(chain)
-    container.upsert_item.assert_called_once_with(
-        body=chain
-    )
+    container.create_item.assert_called_once_with(body=chain, retry_write=0)
 
     result = repo.get_chain("DEMO01", "chain_1")
 
-    assert result == chain
+    assert result == persisted
     container.read_item.assert_called_once_with(
         item="chain_1",
         partition_key="DEMO01",
@@ -61,7 +73,7 @@ def test_cosmos_repository_uses_room_id_partition():
 
     chains = repo.list_chains_for_session("DEMO01")
 
-    assert chains == [chain]
+    assert chains == [persisted]
 
     kwargs = container.query_items.call_args.kwargs
 
@@ -133,3 +145,125 @@ def test_cosmos_handles_failure_during_query_iteration():
     container.query_items.return_value = failed_page()
     with pytest.raises(CosmosUnavailableError, match="connectivity"):
         CosmosChainRepository(container).list_chains_for_session("DEMO01")
+
+
+def test_duplicate_chain_create_cannot_replace_existing_item():
+    container = Mock()
+    container.create_item.side_effect = CosmosResourceExistsError(status_code=409)
+    repo = CosmosChainRepository(container)
+
+    with pytest.raises(ConflictError, match="already exists"):
+        create_chain_document(repo, "DEMO01", "chain_1", "Another prompt")
+
+    container.replace_item.assert_not_called()
+
+
+def test_cosmos_replaces_only_the_matching_revision():
+    container = Mock()
+    chain = create_chain_document(CosmosChainRepository(container), "DEMO01", "chain_1", "Prompt")
+
+    CosmosChainRepository(container).save_chain({**chain, "_etag": '"1"', "_rid": "metadata"})
+
+    container.replace_item.assert_called_once_with(
+        item="chain_1",
+        body=chain,
+        etag='"1"',
+        match_condition=MatchConditions.IfNotModified,
+        retry_write=0,
+    )
+
+
+@pytest.fixture
+def submission():
+    return SubmitPatternRequest.model_validate({
+        "chain_id": "chain_1",
+        "expected_round": 1,
+        "submission_id": "sub_1",
+        "pattern": {"tempo": 120, "tracks": [{"instrument": "kick", "steps": [True] * 16}]},
+    })
+
+
+@pytest.mark.parametrize("winning_id", ["sub_1", "another_submission"])
+def test_stale_etag_rereads_winner_before_deciding_to_retry(submission, winning_id):
+    container = Mock()
+    repo = CosmosChainRepository(container)
+    chain = create_chain_document(repo, "DEMO01", "chain_1", "Prompt")
+    before = {**chain, "_etag": '"1"'}
+    container.read_item.return_value = before
+    container.replace_item.side_effect = CosmosAccessConditionFailedError(status_code=412)
+    winner = {
+        "version_id": "chain_1_v1",
+        "submission_id": winning_id,
+        "round": 1,
+        "player_id": "player_1",
+        "player_name": "Earl",
+        "pattern": submission.pattern.model_dump(),
+    }
+    container.read_item.side_effect = [deepcopy(before), {**before, "_etag": '"2"', "versions": [winner]}]
+
+    if winning_id == submission.submission_id:
+        assert record_pattern_submission(repo, "DEMO01", "player_1", "Earl", submission) == winner
+    else:
+        with pytest.raises(ConflictError, match="already has a submission"):
+            record_pattern_submission(repo, "DEMO01", "player_1", "Earl", submission)
+
+    assert container.read_item.call_count == 2
+    container.replace_item.assert_called_once()
+
+
+def test_cosmos_retries_only_stale_writes_and_caps_attempts(submission):
+    container = Mock()
+    repo = CosmosChainRepository(container)
+    chain = create_chain_document(repo, "DEMO01", "chain_1", "Prompt")
+    container.read_item.side_effect = [
+        {**chain, "_etag": '"1"'}, {**chain, "_etag": '"2"'}, {**chain, "_etag": '"3"'},
+    ]
+    container.replace_item.side_effect = CosmosAccessConditionFailedError(status_code=412)
+
+    with pytest.raises(StaleChainError):
+        record_pattern_submission(repo, "DEMO01", "player_1", "Earl", submission)
+
+    assert [call.kwargs["etag"] for call in container.replace_item.call_args_list] == ['"1"', '"2"', '"3"']
+
+
+def test_ambiguous_write_failure_is_not_retried(submission):
+    container = Mock()
+    repo = CosmosChainRepository(container)
+    chain = create_chain_document(repo, "DEMO01", "chain_1", "Prompt")
+    container.read_item.return_value = {**chain, "_etag": '"1"'}
+    container.replace_item.side_effect = ServiceRequestError("write outcome unknown")
+
+    with pytest.raises(CosmosUnavailableError):
+        record_pattern_submission(repo, "DEMO01", "player_1", "Earl", submission)
+
+    container.replace_item.assert_called_once()
+
+
+def test_duplicate_id_on_another_round_conflicts_after_round_advances(submission):
+    repo = InMemoryChainRepository()
+    create_chain_document(repo, "DEMO01", "chain_1", "Prompt")
+    first = record_pattern_submission(repo, "DEMO01", "player_1", "Earl", submission)
+    second_request = submission.model_copy(update={"expected_round": 2, "submission_id": "sub_2"})
+    second = record_pattern_submission(repo, "DEMO01", "player_2", "Barack", second_request)
+
+    assert record_pattern_submission(repo, "DEMO01", "player_1", "Earl", submission) == first
+    with pytest.raises(ConflictError, match="Conflicting reuse of submission_id"):
+        record_pattern_submission(repo, "DEMO01", "player_2", "Barack", submission)
+    with pytest.raises(ConflictError, match="Conflicting reuse of submission_id"):
+        reused_id = second_request.model_copy(update={"submission_id": "sub_1"})
+        record_pattern_submission(repo, "DEMO01", "player_1", "Earl", reused_id)
+    assert repo.get_chain("DEMO01", "chain_1")["versions"] == [first, second]
+
+
+def test_in_memory_repository_rejects_stale_snapshots():
+    repo = InMemoryChainRepository()
+    create_chain_document(repo, "DEMO01", "chain_1", "Prompt")
+    stale = repo.get_chain("DEMO01", "chain_1")
+    current = repo.get_chain("DEMO01", "chain_1")
+    current["versions"].append({"version_id": "winner"})
+    repo.save_chain(current)
+
+    with pytest.raises(StaleChainError):
+        repo.save_chain(stale)
+
+    assert repo.get_chain("DEMO01", "chain_1")["versions"] == [{"version_id": "winner"}]
