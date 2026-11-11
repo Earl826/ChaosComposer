@@ -1,9 +1,18 @@
 from unittest.mock import Mock
 
 import pytest
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core.exceptions import ServiceRequestError
+from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 
-from pattern_store import CosmosChainRepository, InMemoryChainRepository, create_chain_document
+from pattern_store import (
+    CosmosAccessError,
+    CosmosChainRepository,
+    CosmosStoreError,
+    CosmosUnavailableError,
+    InMemoryChainRepository,
+    create_chain_document,
+    handle_get_assignment_http,
+)
 
 
 def test_chain_document_matches_cosmos_partition_key():
@@ -81,3 +90,46 @@ def test_cosmos_rejects_a_mismatched_partition_before_writing():
         CosmosChainRepository(container).save_chain(chain)
 
     assert not container.mock_calls
+
+
+def test_cosmos_distinguishes_missing_container_from_missing_chain():
+    container = Mock()
+    container.read_item.side_effect = CosmosResourceNotFoundError(status_code=404)
+    container.read.side_effect = CosmosResourceNotFoundError(status_code=404)
+
+    with pytest.raises(CosmosStoreError, match="configured database and container"):
+        CosmosChainRepository(container).get_chain("DEMO01", "chain_1")
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (CosmosHttpResponseError(status_code=401, message="private details"), CosmosAccessError),
+        (CosmosHttpResponseError(status_code=403, message="private details"), CosmosAccessError),
+        (CosmosHttpResponseError(status_code=429, message="private details"), CosmosUnavailableError),
+        (ServiceRequestError("private details"), CosmosUnavailableError),
+    ],
+)
+def test_cosmos_read_failures_are_sanitized_and_return_503(error, expected):
+    container = Mock()
+    container.read_item.side_effect = error
+    repo = CosmosChainRepository(container)
+
+    with pytest.raises(expected) as caught:
+        repo.get_chain("DEMO01", "chain_1")
+    assert "private details" not in str(caught.value)
+
+    response = handle_get_assignment_http(repo, "DEMO01", "chain_1", current_round=1)
+    assert response.status_code == 503
+    assert b"private details" not in response.get_body()
+
+
+def test_cosmos_handles_failure_during_query_iteration():
+    def failed_page():
+        yield {"id": "chain_1", "type": "chain"}
+        raise ServiceRequestError("private details")
+
+    container = Mock()
+    container.query_items.return_value = failed_page()
+    with pytest.raises(CosmosUnavailableError, match="connectivity"):
+        CosmosChainRepository(container).list_chains_for_session("DEMO01")

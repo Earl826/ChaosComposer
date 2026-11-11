@@ -1,7 +1,9 @@
 import json
 import os
+from contextlib import contextmanager
 import azure.functions as func
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core.exceptions import AzureError, ClientAuthenticationError, ServiceRequestError, ServiceResponseError
+from azure.cosmos.exceptions import CosmosClientTimeoutError, CosmosHttpResponseError, CosmosResourceNotFoundError
 from pydantic import ValidationError
 from typing import Any, Protocol
 from models import MusicalPattern, PatternAssignment, PromptAssignment, SubmitPatternRequest, StageResult, ChainResult, RevealResponse, ErrorResponse, AssignmentResponse
@@ -13,6 +15,42 @@ class ConflictError(Exception):
 
 class NotFoundError(Exception):
     """Raised when a requested chain does not exist (HTTP 404)."""
+
+
+class CosmosStoreError(Exception):
+    """Cosmos failed to complete a storage operation."""
+
+
+class CosmosAccessError(CosmosStoreError):
+    """The configured identity could not access Cosmos DB."""
+
+
+class CosmosUnavailableError(CosmosStoreError):
+    """Cosmos DB could not complete the request due to a service or network failure."""
+
+
+@contextmanager
+def cosmos_operation():
+    """Translate SDK failures into operator messages that are safe to log."""
+    try:
+        yield
+    except ClientAuthenticationError:
+        raise CosmosAccessError("Cosmos authentication failed. Check the configured Entra credential.") from None
+    except (ServiceRequestError, ServiceResponseError, CosmosClientTimeoutError):
+        raise CosmosUnavailableError("Could not reach Cosmos DB. Check connectivity and retry.") from None
+    except CosmosHttpResponseError as exc:
+        if exc.status_code in (401, 403):
+            raise CosmosAccessError(
+                "Cosmos access denied. Check the identity's Cosmos DB for NoSQL data-plane role and network access."
+            ) from None
+        if exc.status_code in (408, 429) or exc.status_code >= 500:
+            raise CosmosUnavailableError(f"Cosmos DB is temporarily unavailable (HTTP {exc.status_code}).") from None
+        if exc.status_code == 404:
+            raise CosmosStoreError("Cosmos resource lookup failed. Check the configured database and container.") from None
+        raise CosmosStoreError(f"Cosmos DB rejected the operation (HTTP {exc.status_code}).") from None
+    except AzureError:
+        raise CosmosStoreError("The Azure SDK could not complete the Cosmos operation.") from None
+
 
 def validate_musical_pattern(pattern: MusicalPattern) -> None:
     """Enforces unique instrument tracks and allowed instrument IDs."""
@@ -61,10 +99,15 @@ class CosmosChainRepository:
     def get_chain(
         self, session_code: str, chain_id: str
     ) -> dict[str, Any] | None:
-        try:
-            document = self._container.read_item(item=chain_id, partition_key=session_code)
-        except CosmosResourceNotFoundError:
-            return None
+        with cosmos_operation():
+            try:
+                document = self._container.read_item(item=chain_id, partition_key=session_code)
+            except CosmosResourceNotFoundError as exc:
+                if exc.sub_status not in (None, 0):
+                    raise
+                # A missing container can also surface as a 404 during a point read.
+                self._container.read()
+                return None
         return document if document.get("type") == "chain" else None
 
     def save_chain(self, chain_doc: dict[str, Any]) -> None:
@@ -75,7 +118,8 @@ class CosmosChainRepository:
         ):
             raise ValueError("Expected a chain document with roomId matching session_code.")
 
-        self._container.upsert_item(body=chain_doc)
+        with cosmos_operation():
+            self._container.upsert_item(body=chain_doc)
 
     def list_chains_for_session(
         self, session_code: str
@@ -87,15 +131,12 @@ class CosmosChainRepository:
             "ORDER BY c.id"
         )
 
-        return list(
-            self._container.query_items(
+        with cosmos_operation():
+            return list(self._container.query_items(
                 query=query,
-                parameters=[
-                    {"name": "@roomId", "value": session_code}
-                ],
+                parameters=[{"name": "@roomId", "value": session_code}],
                 partition_key=session_code,
-            )
-        )
+            ))
 
 
 def create_chain_document(repo: ChainRepository, session_code: str, chain_id: str, original_prompt: str) -> dict[str, Any]:
@@ -204,6 +245,8 @@ def handle_submit_pattern_http(req: func.HttpRequest, repo: ChainRepository, ses
         return json_error("not_found", str(exc), 404)
     except ConflictError as exc:
         return json_error("conflict", str(exc), 409)
+    except CosmosStoreError:
+        return json_error("storage_unavailable", "Game storage is unavailable.", 503)
 
 def handle_get_assignment_http(repo: ChainRepository, session_code: str, chain_id: str, current_round: int) -> func.HttpResponse:
     """HTTP wrapper for GET /api/sessions/{session_code}/assignment."""
@@ -215,6 +258,8 @@ def handle_get_assignment_http(repo: ChainRepository, session_code: str, chain_i
         return json_error("not_found", str(exc), 404)
     except ConflictError as exc:
         return json_error("conflict", str(exc), 409)
+    except CosmosStoreError:
+        return json_error("storage_unavailable", "Game storage is unavailable.", 503)
 
 def handle_reveal_http(repo: ChainRepository, session_code: str) -> func.HttpResponse:
     """HTTP wrapper for GET /api/sessions/{session_code}/reveal."""
@@ -225,3 +270,5 @@ def handle_reveal_http(repo: ChainRepository, session_code: str) -> func.HttpRes
         return json_error("not_found", str(exc), 404)
     except ConflictError as exc:
         return json_error("conflict", str(exc), 409)
+    except CosmosStoreError:
+        return json_error("storage_unavailable", "Game storage is unavailable.", 503)
