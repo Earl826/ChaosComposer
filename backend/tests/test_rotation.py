@@ -1,5 +1,5 @@
 import pytest
-from game.rotation import get_round_assignments
+from game.rotation import get_round_assignments, create_initial_assignments
 
 
 @pytest.fixture
@@ -193,19 +193,19 @@ def test_rejects_duplicate_player_ids():
 @pytest.mark.parametrize(
     "assignments",
     [
-        {},  # No assignments.
+        {},
         {
             "A": "chain_1",
             "B": "chain_2",
             "C": "chain_3",
-        },  # Missing D.
+        },
         {
             "A": "chain_1",
             "B": "chain_2",
             "C": "chain_3",
             "D": "chain_4",
             "E": "chain_5",
-        },  # Extra player.
+        },
         {
             "A": "chain_1",
             "B": "chain_2",
@@ -247,3 +247,92 @@ def test_rejects_round_indices_outside_game(player_count):
     for invalid_round in [-10, -1, player_count, player_count + 1, 100]:
         with pytest.raises(ValueError):
             get_round_assignments(players, assignments, invalid_round)
+
+
+@pytest.mark.parametrize("player_count", [4, 5, 6])
+def test_assigns_each_player_to_corresponding_chain(player_count):
+    players = [f"player_{i}" for i in range(player_count)]
+    chains = [f"chain_{i}" for i in range(player_count)]
+
+    result = create_initial_assignments(players, chains)
+
+    expected = {
+        f"player_{i}": f"chain_{i}"
+        for i in range(player_count)
+    }
+    assert result == expected
+
+
+def test_uses_supplied_order_not_sorted_order():
+    players = ["player_c", "player_a", "player_b"]
+    chains = ["chain_2", "chain_3", "chain_1"]
+
+    result = create_initial_assignments(players, chains)
+
+    assert result == {
+        "player_c": "chain_2",
+        "player_a": "chain_3",
+        "player_b": "chain_1",
+    }
+
+
+def test_empty_lists_return_empty_dictionary():
+    assert create_initial_assignments([], []) == {}
+
+
+def test_single_player_and_chain():
+    assert create_initial_assignments(
+        ["player_1"], ["chain_1"]
+    ) == {"player_1": "chain_1"}
+
+
+def test_does_not_modify_input_lists():
+    players = ["player_b", "player_a"]
+    chains = ["chain_2", "chain_1"]
+    original_players = players.copy()
+    original_chains = chains.copy()
+
+    create_initial_assignments(players, chains)
+
+    assert players == original_players
+    assert chains == original_chains
+
+
+# Invalid edge cases: mismatched lengths in both directions.
+@pytest.mark.parametrize(
+    "players, chains",
+    [
+        (["player_1", "player_2"], ["chain_1"]),
+        (["player_1"], ["chain_1", "chain_2"]),
+        ([], ["chain_1"]),
+        (["player_1"], []),
+    ],
+    ids=[
+        "more-players-than-chains",
+        "more-chains-than-players",
+        "no-players",
+        "no-chains",
+    ],
+)
+def test_rejects_mismatched_lengths(players, chains):
+    with pytest.raises(
+        ValueError,
+        match="Each player must have exactly one chain",
+    ):
+        create_initial_assignments(players, chains)
+
+
+def test_rejects_duplicate_player_ids():
+    players = ["player_1", "player_2", "player_1"]
+    chains = ["chain_1", "chain_2", "chain_3"]
+
+    with pytest.raises(ValueError, match="Player IDs must be unique"):
+        create_initial_assignments(players, chains)
+
+
+def test_rejects_duplicate_chain_ids():
+    players = ["player_1", "player_2", "player_3"]
+    chains = ["chain_1", "chain_2", "chain_1"]
+
+    with pytest.raises(ValueError, match="Chain IDs must be unique"):
+        create_initial_assignments(players, chains)

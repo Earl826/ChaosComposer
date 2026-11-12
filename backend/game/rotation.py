@@ -18,7 +18,7 @@ def get_round_assignments(
         raise ValueError("Each player must start with a different chain.")
 
     if not 0 <= round_number < player_count:
-        raise ValueError("Round number must be between 1 and the player count.")
+        raise ValueError("Round number must be between 0 and the player count - 1.")
  
     initial_chains = [ initial_assignments[player] for player in player_order ]
 
@@ -29,3 +29,19 @@ def get_round_assignments(
         round_assignments[player_order[i]] = assigned_chain
 
     return round_assignments
+
+
+def create_initial_assignments(
+        player_order: list[str],
+        chain_ids: list[str],
+) -> dict[str, str]:
+    if len(player_order) != len(chain_ids):
+        raise ValueError("Each player must have exactly one chain.")
+
+    if len(set(player_order)) != len(player_order):
+        raise ValueError("Player IDs must be unique.")
+
+    if len(set(chain_ids)) != len(chain_ids):
+        raise ValueError("Chain IDs must be unique.")
+
+    return dict(zip(player_order, chain_ids))
