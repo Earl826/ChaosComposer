@@ -3,6 +3,15 @@ from copy import deepcopy
 from threading import Lock
 from player_service import set_player_ready
 from player_service import leave_player
+import json
+import azure.functions as func
+
+from player_http import (
+    handle_join_http,
+    handle_get_lobby_http,
+    handle_ready_http,
+    handle_leave_http,
+)
 import hashlib
 
 import pytest
@@ -314,3 +323,103 @@ def test_leave_retries_after_conflict(room):
 
     assert len(state.players) == 1
     assert state.players[0].name == "Ana"
+
+
+def make_request(method, data=None, token=None):
+    headers = {"Content-Type": "application/json"}
+
+    if token is not None:
+        headers["X-Player-Token"] = token
+
+    return func.HttpRequest(
+        method=method,
+        url="http://localhost:7071/api/sessions/K7QX",
+        headers=headers,
+        route_params={"session_code": "K7QX"},
+        body=json.dumps(data).encode() if data is not None else b"",
+    )
+
+
+def test_http_join_creates_player(room):
+    repo = FakeRoomRepository(room)
+
+    request = make_request(
+        "POST", {"player_name": "Ben"}
+    )
+    response = handle_join_http(request, repo, "K7QX")
+
+    assert response.status_code == 201
+
+    result = json.loads(response.get_body())
+    assert result["player_id"]
+    assert result["player_token"]
+    assert len(repo.get_room("K7QX").state.players) == 1
+
+
+def test_http_get_lobby_requires_authentication(room):
+    repo = FakeRoomRepository(room)
+    join_player(repo, "K7QX", "Ben")
+
+    response = handle_get_lobby_http(
+        make_request("GET"), repo, "K7QX"
+    )
+
+    assert response.status_code == 401
+
+
+def test_http_get_lobby_never_exposes_tokens(room):
+    repo = FakeRoomRepository(room)
+    credentials = join_player(repo, "K7QX", "Ben")
+
+    response = handle_get_lobby_http(
+        make_request("GET", token=credentials.player_token),
+        repo,
+        "K7QX",
+    )
+
+    assert response.status_code == 200
+    body = json.loads(response.get_body())
+    assert len(body["players"]) == 1
+    assert credentials.player_token not in response.get_body().decode()
+
+
+def test_http_ready_and_leave(room):
+    repo = FakeRoomRepository(room)
+    credentials = join_player(repo, "K7QX", "Ben")
+
+    ready = handle_ready_http(
+        make_request(
+            "PUT",
+            {"is_ready": True},
+            credentials.player_token,
+        ),
+        repo,
+        "K7QX",
+    )
+
+    assert ready.status_code == 200
+    assert json.loads(ready.get_body())["players"][0]["is_ready"]
+
+    leave = handle_leave_http(
+        make_request(
+            "DELETE", token=credentials.player_token
+        ),
+        repo,
+        "K7QX",
+    )
+
+    assert leave.status_code == 200
+    assert repo.get_room("K7QX") is None
+
+
+def test_http_rejects_invalid_join_body(room):
+    repo = FakeRoomRepository(room)
+
+    response = handle_join_http(
+        make_request("POST", {"player_name": ""}),
+        repo,
+        "K7QX",
+    )
+
+    assert response.status_code == 422
+    assert repo.get_room("K7QX").state.players == []

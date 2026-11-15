@@ -118,7 +118,6 @@ def join_player(
 
         prepared = prepare_player(stored.state, player_name)
 
-        # Update our local copy, not the stored document.
         stored.state.players.append(prepared.info)
         stored.token_hashes[
             prepared.info.player_id
@@ -129,11 +128,7 @@ def join_player(
         try:
             repository.save_if_unchanged(stored)
         except VersionConflict:
-            # Another request updated the room.
-            # Read the latest state and revalidate.
             continue
-
-        # Credentials are returned only after successful persistence.
         return prepared.credentials
 
     raise LobbyError(409, "Room changed during joining")
@@ -185,7 +180,6 @@ def set_player_ready(
         if stored.state.status != GameStatus.lobby:
             raise LobbyError(409, "Readiness can only change in lobby")
 
-        # Idempotency: repeating the same request changes nothing.
         if player.is_ready == is_ready:
             return stored.state
 
@@ -196,7 +190,6 @@ def set_player_ready(
             repository.save_if_unchanged(stored)
             return stored.state
         except VersionConflict:
-            # Reload and check the latest room state.
             continue
 
     raise LobbyError(409, "Room changed during readiness update")
