@@ -99,6 +99,9 @@ class RoomRepository(Protocol):
     def save_if_unchanged(self, room: StoredRoom) -> None:
         ...
 
+    def delete_if_unchanged(self, room: StoredRoom) -> None:
+        ...
+
 
 def join_player(
     repository: RoomRepository,
@@ -197,3 +200,51 @@ def set_player_ready(
             continue
 
     raise LobbyError(409, "Room changed during readiness update")
+
+
+def leave_player(
+    repository: RoomRepository,
+    session_code: str,
+    player_token: str,
+) -> SessionState:
+    """Remove an authenticated player from a lobby."""
+
+    for _ in range(8):
+        stored = repository.get_room(session_code)
+
+        if stored is None:
+            raise LobbyError(404, "Room not found")
+
+        player = authenticate_player(stored, player_token)
+
+        if stored.state.status != GameStatus.lobby:
+            raise LobbyError(409, "Cannot leave after game starts")
+
+        # removing only the authenticated player
+        stored.state.players = [
+            p for p in stored.state.players
+            if p.player_id != player.player_id
+        ]
+
+        # Revoke authentication token
+        stored.token_hashes.pop(player.player_id, None)
+
+        # if the host leaves, transfer ownership to the earliest remaining player
+        if player.is_host and stored.state.players:
+            stored.state.players[0].is_host = True
+
+        stored.state.state_version += 1
+
+        try:
+            if not stored.state.players:
+                repository.delete_if_unchanged(stored)
+            else:
+                repository.save_if_unchanged(stored)
+
+            return stored.state
+
+        except VersionConflict:
+            # if another request changed the room reload and revalidate before retrying.
+            continue
+
+    raise LobbyError(409, "Room changed during leave")

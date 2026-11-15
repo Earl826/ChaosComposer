@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from threading import Lock
 from player_service import set_player_ready
+from player_service import leave_player
 import hashlib
 
 import pytest
@@ -50,6 +51,19 @@ class FakeRoomRepository:
             saved = deepcopy(room)
             saved.etag = str(int(self.room.etag) + 1)
             self.room = saved
+
+    
+    def delete_if_unchanged(self, room):
+        with self.lock:
+            if self.fail_next:
+                self.fail_next = False
+                raise VersionConflict()
+
+            if self.room is None or self.room.etag != room.etag:
+                raise VersionConflict()
+
+            self.room = None
+
 
 
 @pytest.fixture
@@ -212,3 +226,91 @@ def test_ready_retries_after_version_conflict(room):
 
     assert state.players[0].is_ready is True
     assert repo.get_room("K7QX").state.players[0].is_ready is True
+
+
+def test_non_host_can_leave(room):
+    repo = FakeRoomRepository(room)
+
+    host = join_player(repo, "K7QX", "Ana")
+    guest = join_player(repo, "K7QX", "Ben")
+
+    repo.room.state.players[0].is_host = True
+
+    state = leave_player(
+        repo, "K7QX", guest.player_token
+    )
+
+    assert len(state.players) == 1
+    assert state.players[0].player_id == host.player_id
+    assert state.players[0].is_host is True
+
+
+def test_host_leaving_transfers_ownership(room):
+    repo = FakeRoomRepository(room)
+
+    host = join_player(repo, "K7QX", "Ana")
+    second = join_player(repo, "K7QX", "Ben")
+    join_player(repo, "K7QX", "Charlie")
+
+    repo.room.state.players[0].is_host = True
+
+    state = leave_player(
+        repo, "K7QX", host.player_token
+    )
+
+    assert len(state.players) == 2
+    assert state.players[0].player_id == second.player_id
+    assert state.players[0].is_host is True
+    assert state.players[1].is_host is False
+
+
+def test_last_player_leaving_deletes_room(room):
+    repo = FakeRoomRepository(room)
+
+    player = join_player(repo, "K7QX", "Ana")
+
+    state = leave_player(
+        repo, "K7QX", player.player_token
+    )
+
+    assert state.players == []
+    assert repo.get_room("K7QX") is None
+
+
+def test_invalid_token_cannot_remove_player(room):
+    repo = FakeRoomRepository(room)
+    join_player(repo, "K7QX", "Ana")
+
+    with pytest.raises(LobbyError) as exc:
+        leave_player(repo, "K7QX", "invalid-token")
+
+    assert exc.value.status_code == 401
+    assert len(repo.get_room("K7QX").state.players) == 1
+
+
+def test_cannot_leave_after_game_starts(room):
+    repo = FakeRoomRepository(room)
+    player = join_player(repo, "K7QX", "Ana")
+
+    repo.room.state.status = GameStatus.composing
+
+    with pytest.raises(LobbyError) as exc:
+        leave_player(repo, "K7QX", player.player_token)
+
+    assert exc.value.status_code == 409
+
+
+def test_leave_retries_after_conflict(room):
+    repo = FakeRoomRepository(room)
+
+    join_player(repo, "K7QX", "Ana")
+    guest = join_player(repo, "K7QX", "Ben")
+
+    repo.fail_next = True
+
+    state = leave_player(
+        repo, "K7QX", guest.player_token
+    )
+
+    assert len(state.players) == 1
+    assert state.players[0].name == "Ana"
