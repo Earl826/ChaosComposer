@@ -1,6 +1,7 @@
 import hashlib
 import secrets
 import uuid
+from typing import Protocol
 from dataclasses import dataclass
 from models import PlayerInfo, PlayerCredentials
 from pydantic import ValidationError
@@ -76,3 +77,60 @@ def prepare_player(
         credentials=credentials,
         token_hash=token_hash,
     )
+
+
+@dataclass
+class StoredRoom:
+    """Room data, including private authentication information."""
+    state: SessionState
+    token_hashes: dict[str, str]
+    etag: str
+
+
+class VersionConflict(Exception):
+    """The room changed before our update could be saved."""
+
+
+class RoomRepository(Protocol):
+    def get_room(self, session_code: str) -> StoredRoom | None:
+        ...
+
+    def save_if_unchanged(self, room: StoredRoom) -> None:
+        ...
+
+
+def join_player(
+    repository: RoomRepository,
+    session_code: str,
+    player_name: str,
+) -> PlayerCredentials:
+    """Join a room with optimistic concurrency and bounded retries."""
+
+    for _ in range(8):
+        stored = repository.get_room(session_code)
+
+        if stored is None:
+            raise LobbyError(404, "Room not found")
+
+        prepared = prepare_player(stored.state, player_name)
+
+        # Update our local copy, not the stored document.
+        stored.state.players.append(prepared.info)
+        stored.token_hashes[
+            prepared.info.player_id
+        ] = prepared.token_hash
+
+        stored.state.state_version += 1
+
+        try:
+            repository.save_if_unchanged(stored)
+        except VersionConflict:
+            # Another request updated the room.
+            # Read the latest state and revalidate.
+            continue
+
+        # Credentials are returned only after successful persistence.
+        return prepared.credentials
+
+    raise LobbyError(409, "Room changed during joining")
+
