@@ -1,4 +1,8 @@
-
+import hashlib
+import secrets
+import uuid
+from dataclasses import dataclass
+from models import PlayerInfo, PlayerCredentials
 from pydantic import ValidationError
 from models import GameStatus, JoinSessionRequest, SessionState
 
@@ -32,3 +36,43 @@ def validate_join(room: SessionState, player_name: str) -> str:
         raise LobbyError(409, "Room is full")
 
     return name
+
+
+@dataclass(frozen=True)
+class PreparedPlayer:
+    info: PlayerInfo
+    credentials: PlayerCredentials
+    token_hash: str
+
+
+def prepare_player(
+    room: SessionState, player_name: str
+) -> PreparedPlayer:
+    """Prepare a validated player without saving them yet."""
+
+    name = validate_join(room, player_name)
+
+    player_id = str(uuid.uuid4())
+    token = secrets.token_urlsafe(32)
+
+    token_hash = hashlib.sha256(
+        token.encode("utf-8")
+    ).hexdigest()
+
+    info = PlayerInfo(
+        player_id=player_id,
+        name=name,
+        is_host=False,
+        is_ready=False,
+    )
+
+    credentials = PlayerCredentials(
+        player_id=player_id,
+        player_token=token,
+    )
+
+    return PreparedPlayer(
+        info=info,
+        credentials=credentials,
+        token_hash=token_hash,
+    )
