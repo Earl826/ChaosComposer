@@ -1,6 +1,7 @@
 import hashlib
 import secrets
 import uuid
+import hmac
 from typing import Protocol
 from dataclasses import dataclass
 from models import PlayerInfo, PlayerCredentials
@@ -134,3 +135,65 @@ def join_player(
 
     raise LobbyError(409, "Room changed during joining")
 
+
+def authenticate_player(
+    stored: StoredRoom,
+    player_token: str,
+) -> PlayerInfo:
+    """Identify a player using their secret room token."""
+
+    if not isinstance(player_token, str) or not player_token:
+        raise LobbyError(401, "Missing or invalid player token")
+
+    provided_hash = hashlib.sha256(
+        player_token.encode("utf-8")
+    ).hexdigest()
+
+    for player in stored.state.players:
+        saved_hash = stored.token_hashes.get(player.player_id)
+
+        if saved_hash and hmac.compare_digest(
+            saved_hash, provided_hash
+        ):
+            return player
+
+    raise LobbyError(401, "Missing or invalid player token")
+
+
+def set_player_ready(
+    repository: RoomRepository,
+    session_code: str,
+    player_token: str,
+    is_ready: bool,
+) -> SessionState:
+    """Set a player's readiness with concurrency protection."""
+
+    if type(is_ready) is not bool:
+        raise LobbyError(422, "is_ready must be a boolean")
+
+    for _ in range(8):
+        stored = repository.get_room(session_code)
+
+        if stored is None:
+            raise LobbyError(404, "Room not found")
+
+        player = authenticate_player(stored, player_token)
+
+        if stored.state.status != GameStatus.lobby:
+            raise LobbyError(409, "Readiness can only change in lobby")
+
+        # Idempotency: repeating the same request changes nothing.
+        if player.is_ready == is_ready:
+            return stored.state
+
+        player.is_ready = is_ready
+        stored.state.state_version += 1
+
+        try:
+            repository.save_if_unchanged(stored)
+            return stored.state
+        except VersionConflict:
+            # Reload and check the latest room state.
+            continue
+
+    raise LobbyError(409, "Room changed during readiness update")

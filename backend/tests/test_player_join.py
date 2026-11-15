@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from threading import Lock
+from player_service import set_player_ready
 import hashlib
 
 import pytest
@@ -130,3 +131,84 @@ def test_retries_after_version_conflict(room):
     saved = repo.get_room("K7QX")
     assert len(saved.state.players) == 1
     assert saved.state.players[0].name == "Ben"
+
+
+def test_player_can_become_ready(room):
+    repo = FakeRoomRepository(room)
+    credentials = join_player(repo, "K7QX", "Ben")
+
+    state = set_player_ready(
+        repo, "K7QX", credentials.player_token, True
+    )
+
+    assert state.players[0].is_ready is True
+    assert state.state_version == 2
+
+
+def test_player_can_become_unready(room):
+    repo = FakeRoomRepository(room)
+    credentials = join_player(repo, "K7QX", "Ben")
+
+    set_player_ready(
+        repo, "K7QX", credentials.player_token, True
+    )
+    state = set_player_ready(
+        repo, "K7QX", credentials.player_token, False
+    )
+
+    assert state.players[0].is_ready is False
+
+
+def test_repeated_ready_request_is_idempotent(room):
+    repo = FakeRoomRepository(room)
+    credentials = join_player(repo, "K7QX", "Ben")
+
+    first = set_player_ready(
+        repo, "K7QX", credentials.player_token, True
+    )
+    original_version = first.state_version
+
+    second = set_player_ready(
+        repo, "K7QX", credentials.player_token, True
+    )
+
+    assert second.state_version == original_version
+
+
+def test_invalid_token_cannot_change_readiness(room):
+    repo = FakeRoomRepository(room)
+    join_player(repo, "K7QX", "Ben")
+
+    with pytest.raises(LobbyError) as exc:
+        set_player_ready(repo, "K7QX", "fake-token", True)
+
+    assert exc.value.status_code == 401
+    assert repo.get_room("K7QX").state.players[0].is_ready is False
+
+
+def test_readiness_rejected_after_game_starts(room):
+    repo = FakeRoomRepository(room)
+    credentials = join_player(repo, "K7QX", "Ben")
+
+    repo.room.state.status = GameStatus.composing
+
+    with pytest.raises(LobbyError) as exc:
+        set_player_ready(
+            repo, "K7QX", credentials.player_token, True
+        )
+
+    assert exc.value.status_code == 409
+
+
+def test_ready_retries_after_version_conflict(room):
+    repo = FakeRoomRepository(room)
+    credentials = join_player(repo, "K7QX", "Ben")
+
+    repo.fail_next = True
+
+    state = set_player_ready(
+        repo, "K7QX", credentials.player_token, True
+    )
+
+    assert state.players[0].is_ready is True
+    assert repo.get_room("K7QX").state.players[0].is_ready is True
