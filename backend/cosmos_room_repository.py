@@ -1,5 +1,5 @@
 # Cosmos DB adapter for player and lobby state
-
+from pattern_store import get_chain_repository
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import (
     CosmosAccessConditionFailedError,
@@ -86,3 +86,8 @@ class CosmosRoomRepository:
                 CosmosResourceNotFoundError,
             ):
                 raise VersionConflict() from None
+
+def get_room_repository() -> CosmosRoomRepository:
+    """Reuse the team's existing Cosmos container connection."""
+    chain_repository = get_chain_repository()
+    return CosmosRoomRepository(chain_repository.container_client)

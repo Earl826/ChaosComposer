@@ -15,6 +15,12 @@ from models import (
 from typing import Any, Literal
 from pydantic import BaseModel
 from pattern_store import CosmosStoreError, get_chain_repository, json_error
+from cosmos_room_repository import get_room_repository
+from player_http import (
+    handle_join_http,
+    handle_ready_http,
+    handle_leave_http,
+)
 
 app = func.FunctionApp()
 logger = logging.getLogger(__name__)
@@ -66,6 +72,19 @@ def not_implemented(name: str) -> func.HttpResponse:
         json.dumps({"code": "not_implemented", "detail": name}),
         status_code=501, mimetype="application/json",
     )
+
+
+def run_player_handler(req: func.HttpRequest, handler) -> func.HttpResponse:
+    """Pass a player request to its HTTP handler using the shared room repository."""
+    try:
+        repository = get_room_repository()
+        session_code = req.route_params["session_code"]
+        return handler(req, repository, session_code)
+    except CosmosStoreError as exc:
+        logger.warning("Player room storage unavailable: %s", exc)
+        return json_error(
+            "storage_unavailable", "Room storage is unavailable.", 503
+        )
 
 
 @app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -134,7 +153,7 @@ def create_session(req: func.HttpRequest) -> func.HttpResponse:
     tags=['players'],
 )
 def join_session(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('join_session')
+    return run_player_handler(req, handle_join_http)
 
 
 @app.route(route='sessions/{session_code}', methods=['GET'], auth_level=func.AuthLevel.ANONYMOUS)
@@ -161,7 +180,7 @@ def get_session(req: func.HttpRequest) -> func.HttpResponse:
     tags=['players'],
 )
 def set_ready(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('set_ready')
+    return run_player_handler(req, handle_ready_http)
 
 
 @app.route(route='sessions/{session_code}/players/me', methods=['DELETE'], auth_level=func.AuthLevel.ANONYMOUS)
@@ -174,7 +193,7 @@ def set_ready(req: func.HttpRequest) -> func.HttpResponse:
     tags=['players'],
 )
 def leave_session(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('leave_session')
+    return run_player_handler(req, handle_leave_http)
 
 
 @app.route(route='sessions/{session_code}/start', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)

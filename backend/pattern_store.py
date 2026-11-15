@@ -127,6 +127,11 @@ class CosmosChainRepository:
     def __init__(self, container_client: Any) -> None:
         self._container = container_client
 
+    @property
+    def container_client(self):
+        """Expose the existing Cosmos container client for shared storage."""
+        return self._container
+
     def check_ready(self) -> None:
         """Verify authenticated access to the expected Cosmos container metadata."""
         with cosmos_operation():
