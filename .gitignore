@@ -76,5 +76,4 @@ project.lock.json
 /TestResults
 /tools/NuGet.exe
 /App_Data
-
 .vscode
