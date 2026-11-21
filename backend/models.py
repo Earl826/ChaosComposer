@@ -6,6 +6,7 @@ Pattern format and instrument identifiers must be agreed with the sequencer owne
 from enum import Enum
 from typing import Annotated, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from datetime import datetime
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=24)]
 PromptText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
@@ -53,6 +54,7 @@ class SessionState(APIModel):
     players: list[PlayerInfo]
     prompted_player_ids: list[str]
     submitted_player_ids: list[str] = Field(description="Accepted, persisted contributions for the current composing round only.")
+    round_deadline: datetime | None = None
 
 class ReadyRequest(APIModel):
     is_ready: bool

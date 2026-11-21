@@ -132,7 +132,10 @@ def complete_round_transition(
     else:
         game.round_index += 1
         game.phase = GamePhase.COMPOSING
+        game.round_started_at = datetime.now(timezone.utc)
+        game.round_deadline = game.round_started_at + timedelta(0, 60)
 
     game.state_version += 1
+
     
     
