@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
+from datetime import datetime
 
 
 class GamePhase(str, Enum):
@@ -24,6 +25,8 @@ class GameState:
     prompt_chain_ids: dict[str, str] = field(default_factory=dict)
     submitted_player_ids: set[str] = field(default_factory=set)
     state_version: int = 0
+    round_started_at: datetime | None = None
+    round_deadline: datetime | None = None
 
     @property
     def total_rounds(self) -> int:

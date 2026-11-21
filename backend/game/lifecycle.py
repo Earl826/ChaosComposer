@@ -1,5 +1,6 @@
 from .state import GameState, GamePhase
 from .rotation import create_initial_assignments, get_round_assignments
+from datetime import datetime, timezone, timedelta
 
 
 MIN_PLAYERS = 4
@@ -21,6 +22,8 @@ def start_game(game: GameState, requesting_player_id: str) -> None:
 
     game.phase = GamePhase.PROMPT_SUBMISSION
     game.state_version += 1
+    game.round_started_at = datetime.now(timezone.utc)
+    game.round_deadline = game.round_started_at + timedelta(0, 60)
 
 
 def start_composing(game: GameState) -> None:
@@ -52,6 +55,9 @@ def start_composing(game: GameState) -> None:
     game.phase = GamePhase.COMPOSING
     game.state_version += 1
 
+    game.round_started_at = datetime.now(timezone.utc)
+    game.round_deadline = game.round_started_at + timedelta(0, 60)
+
 
 def get_player_assignment(game: GameState, player_id: str) -> str:
     if game.phase != GamePhase.COMPOSING or game.round_index is None:
@@ -71,6 +77,8 @@ def record_player_submission(game: GameState, player_id: str) -> bool:
         raise ValueError("Referenced player not in game")
     if player_id in game.submitted_player_ids:
         raise ValueError("Referenced player already submitted")
+    if game.round_deadline is not None and game.round_deadline < datetime.now(timezone.utc):
+        raise ValueError("Player can't submit when round deadline has passed")
 
     game.submitted_player_ids.add(player_id)
     game.state_version += 1
@@ -88,17 +96,23 @@ def begin_round_transition(
     if game.phase != GamePhase.COMPOSING or game.round_index is None:
         raise ValueError("Game must be in composing phase to begin round transition")
 
+    if game.round_deadline is None or game.round_started_at is None:
+        raise ValueError("Unknown issue with round timings")
+
     if expected_round is not None and expected_round != game.current_round:
         raise ValueError("Expected round was provided and does not match the game state's current round")
 
     if expected_state_version is not None and expected_state_version != game.state_version:
         raise ValueError("Expected state version was provided and is stale")
 
-    if set(game.submitted_player_ids) != set(game.player_order):
-        raise ValueError("Not all players submitted a composition")
+    if set(game.submitted_player_ids) != set(game.player_order) and datetime.now(timezone.utc) < game.round_deadline:
+        raise ValueError("Not all players submitted a composition and round deadline has not passed")
 
     game.phase = GamePhase.TRANSITIONING
     game.state_version += 1
+
+    game.round_started_at = None
+    game.round_deadline = None
 
 
 def complete_round_transition(
