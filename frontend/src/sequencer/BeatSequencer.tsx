@@ -6,13 +6,26 @@ import {
   parsePattern, serializePattern, STEP_COUNT, toggleStep,
 } from './pattern'
 import type { MusicalPattern } from './pattern'
+import type { Instrument } from './pattern'
 
 const SAVE_KEY = 'chaoscomposer.pattern.v1'
 const STEPS = Array.from({ length: STEP_COUNT }, (_, index) => index)
 
-export default function BeatSequencer() {
-  const [pattern, setPattern] = useState(createPattern)
-  const [tempoDraft, setTempoDraft] = useState('120')
+interface BeatSequencerProps {
+  initialPattern?: MusicalPattern
+  locked?: boolean
+  onPatternChange?: (pattern: MusicalPattern) => void
+  onSubmit?: () => void
+  submitDisabled?: boolean
+  submitLabel?: string
+}
+
+export default function BeatSequencer({
+  initialPattern, locked = false, onPatternChange, onSubmit,
+  submitDisabled = false, submitLabel = 'Submit pattern',
+}: BeatSequencerProps) {
+  const [pattern, setPattern] = useState(() => initialPattern ?? createPattern())
+  const [tempoDraft, setTempoDraft] = useState(String(initialPattern?.tempo ?? 120))
   const [playback, setPlayback] = useState<'stopped' | 'starting' | 'playing'>('stopped')
   const [activeStep, setActiveStep] = useState<number | null>(null)
   const [message, setMessage] = useState('')
@@ -37,7 +50,9 @@ export default function BeatSequencer() {
   }, [])
 
   function updatePattern(next: MusicalPattern) {
+    if (locked) return
     setPattern(next)
+    onPatternChange?.(next)
     playerRef.current?.updatePattern(next)
     setMessage('')
     setError('')
@@ -141,7 +156,7 @@ export default function BeatSequencer() {
         <div className="tempo-control">
           <label htmlFor="tempo">Tempo <span>BPM</span></label>
           <input id="tempo" type="number" min={MIN_TEMPO} max={MAX_TEMPO} step="any"
-            value={tempoDraft} disabled={importing} aria-invalid={tempoInvalid}
+            value={tempoDraft} disabled={importing || locked} aria-invalid={tempoInvalid}
             aria-describedby="tempo-hint" onChange={(event) => changeTempo(event.target.value)}
             onBlur={() => setTempoDraft(String(pattern.tempo))} />
           <span id="tempo-hint">{tempoInvalid ? 'Enter 30–300 BPM' : '30–300 BPM'}</span>
@@ -166,7 +181,7 @@ export default function BeatSequencer() {
                 <td key={step} className={activeStep === step ? 'current-step' : ''}>
                   <button type="button" className={`step ${active ? 'active' : ''} ${step % 4 === 0 ? 'beat-start' : ''}`}
                     aria-label={`${INSTRUMENTS[track.instrument]}, step ${step + 1}`}
-                    aria-pressed={active} disabled={importing}
+                    aria-pressed={active} disabled={importing || locked}
                     onClick={() => updatePattern(toggleStep(pattern, track.instrument, step))}>
                     <span aria-hidden="true">{active ? '●' : ''}</span>
                   </button>
@@ -177,18 +192,31 @@ export default function BeatSequencer() {
         </table>
       </div>
 
+      {pattern.tracks.length < Object.keys(INSTRUMENTS).length && <label className="add-instrument">
+        Add instrument
+        <select aria-label="Add instrument" value="" disabled={importing || locked} onChange={(event) => {
+          const instrument = event.target.value as Instrument
+          updatePattern({ ...pattern, tracks: [...pattern.tracks, { instrument, steps: Array<boolean>(STEP_COUNT).fill(false) }] })
+        }}>
+          <option value="" disabled>Choose an instrument</option>
+          {(Object.keys(INSTRUMENTS) as Instrument[])
+            .filter((instrument) => !pattern.tracks.some((track) => track.instrument === instrument))
+            .map((instrument) => <option key={instrument} value={instrument}>{INSTRUMENTS[instrument]}</option>)}
+        </select>
+      </label>}
+
       <div className="pattern-actions">
         <div className="file-controls">
           <button onClick={save} disabled={importing || tempoInvalid}>Save in browser</button>
-          <button onClick={reloadSaved} disabled={importing}>Load saved</button>
+          <button onClick={reloadSaved} disabled={importing || locked}>Load saved</button>
           <button onClick={exportFile} disabled={importing || tempoInvalid}>Export JSON</button>
-          <button onClick={() => fileRef.current?.click()} disabled={importing}>
+          <button onClick={() => fileRef.current?.click()} disabled={importing || locked}>
             {importing ? 'Loading…' : 'Import JSON'}
           </button>
           <input ref={fileRef} type="file" accept=".json,application/json" hidden
             aria-label="Import pattern file" onChange={(event) => void importFile(event)} />
         </div>
-        <button className="clear" disabled={importing} onClick={() => {
+        <button className="clear" disabled={importing || locked} onClick={() => {
           playerRef.current?.stop()
           updatePattern({
             ...pattern,
@@ -203,6 +231,9 @@ export default function BeatSequencer() {
         {error ? <p className="error" role="alert">{error}</p> : <p role="status">{message}</p>}
       </div>
       <p className="storage-hint">Save keeps one pattern on this device. Export a JSON file to keep more patterns or share a beat.</p>
+      {onSubmit && <div className="submit-pattern">
+        <button className="primary" onClick={onSubmit} disabled={submitDisabled || importing || tempoInvalid}>{submitLabel}</button>
+      </div>}
     </section>
   )
 }
