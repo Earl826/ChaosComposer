@@ -52,7 +52,7 @@ class SessionState(APIModel):
     session_code: str
     status: GameStatus
     state_version: int = Field(ge=0, description="Monotonic revision for conditional state-changing requests.")
-    max_players: int = Field(ge=MIN_PLAYERS, le=MAX_PLAYERS)
+    max_players: int = Field(default=MAX_PLAYERS, ge=MIN_PLAYERS, le=MAX_PLAYERS)
     current_round: int = Field(ge=0, description="0 before composing; composing rounds are numbered 1..total_rounds.")
     total_rounds: int = Field(ge=0, description="0 before start; frozen player count after start.")
     players: list[PlayerInfo]
