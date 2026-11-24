@@ -11,10 +11,15 @@ from models import (
     PlayerCredentials, SessionState, ReadyRequest, StartGameRequest,
     SubmitPromptRequest, AssignmentResponse, SubmitPatternRequest,
     AdvanceRoundRequest, RevealResponse, NegotiateRequest, NegotiateResponse,
+    SessionStatus,
 )
 from typing import Any, Literal
 from pydantic import BaseModel
 from pattern_store import CosmosStoreError, get_chain_repository, json_error
+from room_store import (
+    get_room_repository, handle_create_room_http, handle_get_room_http,
+    handle_room_status_http,
+)
 
 app = func.FunctionApp()
 logger = logging.getLogger(__name__)
@@ -121,7 +126,7 @@ def swagger_ui(req: func.HttpRequest) -> func.HttpResponse:
     tags=['sessions'],
 )
 def create_session(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('create_session')
+    return handle_create_room_http(req, get_room_repository)
 
 
 @app.route(route='sessions/{session_code}/players', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
@@ -147,7 +152,19 @@ def join_session(req: func.HttpRequest) -> func.HttpResponse:
     tags=['sessions'],
 )
 def get_session(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('get_session')
+    return handle_get_room_http(req, get_room_repository, req.route_params.get("session_code", ""))
+
+
+@app.route(route='sessions/{session_code}/status', methods=['GET'], auth_level=func.AuthLevel.ANONYMOUS)
+@openapi(
+    summary='Get room status',
+    description='Public, lightweight status (phase, player count, capacity). Excludes roster, names, tokens.',
+    route='/api/sessions/{session_code}/status', method='get',
+    responses=documented_responses(SessionStatus, success=200, errors=(404,)),
+    tags=['sessions'],
+)
+def get_session_status(req: func.HttpRequest) -> func.HttpResponse:
+    return handle_room_status_http(get_room_repository, req.route_params.get("session_code", ""))
 
 
 @app.route(route='sessions/{session_code}/players/me/ready', methods=['PUT'], auth_level=func.AuthLevel.ANONYMOUS)

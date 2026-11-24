@@ -11,6 +11,9 @@ Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 PromptText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 Identifier = Annotated[str, StringConstraints(min_length=1)]
 
+MIN_PLAYERS = 4
+MAX_PLAYERS = 6
+
 class APIModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -27,6 +30,7 @@ class GameStatus(str, Enum):
 
 class CreateSessionRequest(APIModel):
     player_name: Name
+    max_players: int = Field(default=MAX_PLAYERS, ge=MIN_PLAYERS, le=MAX_PLAYERS, description="Room capacity. Game needs 4-6 players.")
 
 class JoinSessionRequest(APIModel):
     player_name: Name
@@ -48,11 +52,19 @@ class SessionState(APIModel):
     session_code: str
     status: GameStatus
     state_version: int = Field(ge=0, description="Monotonic revision for conditional state-changing requests.")
+    max_players: int = Field(ge=MIN_PLAYERS, le=MAX_PLAYERS)
     current_round: int = Field(ge=0, description="0 before composing; composing rounds are numbered 1..total_rounds.")
     total_rounds: int = Field(ge=0, description="0 before start; frozen player count after start.")
     players: list[PlayerInfo]
     prompted_player_ids: list[str]
     submitted_player_ids: list[str] = Field(description="Accepted, persisted contributions for the current composing round only.")
+
+class SessionStatus(APIModel):
+    session_code: str
+    status: GameStatus
+    player_count: int = Field(ge=0)
+    max_players: int = Field(ge=MIN_PLAYERS, le=MAX_PLAYERS)
+    is_full: bool
 
 class ReadyRequest(APIModel):
     is_ready: bool
