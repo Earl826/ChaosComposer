@@ -1,6 +1,7 @@
 """ChaosComposer HTTP API and proposed gameplay contracts."""
 import json
 import logging
+import secrets
 from copy import deepcopy
 import azure.functions as func
 from azure_functions_openapi.decorator import openapi
@@ -24,6 +25,12 @@ PLAYER_TOKEN = [{
     "description": "Room-scoped player credential returned by create/join. Validate membership and permissions in the handler.",
     "schema": {"type": "string", "minLength": 1},
 }]
+
+ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _generate_room_code(length: int = 4) -> str:
+    return "".join(secrets.choice(ROOM_CODE_ALPHABET) for _ in range(length))
 
 
 def inline_schema(model):
@@ -187,7 +194,7 @@ def leave_session(req: func.HttpRequest) -> func.HttpResponse:
     responses=documented_responses(SessionState, success=200, errors=(401, 403, 404, 409, 422)),
     tags=['game'],
 )
-def start_game(req: func.HttpRequest) -> func.HttpResponse:
+def start_session(req: func.HttpRequest) -> func.HttpResponse:
     return not_implemented('start_game')
 
 
@@ -263,7 +270,7 @@ def reveal(req: func.HttpRequest) -> func.HttpResponse:
 @app.generic_input_binding(
     arg_name="connectionInfo", 
     type="signalRConnectionInfo", 
-    hubName="serverless", 
+    hubName="gamehub", 
     connectionStringSetting="AzureSignalRConnectionString"
 )
 @openapi(
