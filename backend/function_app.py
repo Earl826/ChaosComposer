@@ -1,6 +1,7 @@
 """ChaosComposer HTTP API and proposed gameplay contracts."""
 import json
 import logging
+import secrets
 from copy import deepcopy
 import azure.functions as func
 from azure_functions_openapi.decorator import openapi
@@ -24,6 +25,12 @@ PLAYER_TOKEN = [{
     "description": "Room-scoped player credential returned by create/join. Validate membership and permissions in the handler.",
     "schema": {"type": "string", "minLength": 1},
 }]
+
+ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _generate_room_code(length: int = 4) -> str:
+    return "".join(secrets.choice(ROOM_CODE_ALPHABET) for _ in range(length))
 
 
 def inline_schema(model):
@@ -187,7 +194,7 @@ def leave_session(req: func.HttpRequest) -> func.HttpResponse:
     responses=documented_responses(SessionState, success=200, errors=(401, 403, 404, 409, 422)),
     tags=['game'],
 )
-def start_game(req: func.HttpRequest) -> func.HttpResponse:
+def start_session(req: func.HttpRequest) -> func.HttpResponse:
     return not_implemented('start_game')
 
 
@@ -260,6 +267,12 @@ def reveal(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.route(route='negotiate', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
+@app.generic_input_binding(
+    arg_name="connectionInfo", 
+    type="signalRConnectionInfo", 
+    hubName="gamehub", 
+    connectionStringSetting="AzureSignalRConnectionString"
+)
 @openapi(
     summary='Get room-scoped SignalR connection details',
     description='Optional live-update transport. Authenticate player membership in requested room and scope delivery server-side to that room. Publish only state-change notifications, never tokens, hidden prompts or musical histories. Clients refetch state/assignment; polling remains a valid MVP alternative.',
@@ -269,5 +282,13 @@ def reveal(req: func.HttpRequest) -> func.HttpResponse:
     responses=documented_responses(NegotiateResponse, success=200, errors=(401, 403, 404, 422)),
     tags=['realtime'],
 )
-def negotiate(req: func.HttpRequest) -> func.HttpResponse:
-    return not_implemented('negotiate')
+def negotiate(req: func.HttpRequest, connectionInfo) -> func.HttpResponse:
+    info = json.loads(connectionInfo)
+    return func.HttpResponse(
+        body=json.dumps({
+            "url": info["url"],
+            "access_token": info["accessToken"],
+        }),
+        mimetype="application/json",
+        status_code=200,
+    )

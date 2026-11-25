@@ -24,6 +24,7 @@ lerna-debug.log*
 appsettings.json
 local.settings.json
 *.local
+settings.json
 
 # Python environments
 .venv
